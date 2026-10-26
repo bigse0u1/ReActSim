@@ -24,7 +24,8 @@ from reactsim.types import (
 
 TABLE_Z = 0.02
 PLATE_HALF = 0.06
-REACH_RADIUS = 0.45   # from robot base at origin
+ROBOT_BASE_XY = np.array([-0.615, 0.0])
+REACH_RADIUS = 0.80   # Panda reach ~0.85 m
 
 
 @dataclass
@@ -47,10 +48,10 @@ class FakeWorld:
             return np.array([*(np.array(xy) + rng.uniform(-0.03, 0.03, 2)), TABLE_Z])
 
         objects = {
-            "red_cube": ObjectState("red_cube", jitter([0.10, 0.15]), "red", "cube"),
-            "blue_cube": ObjectState("blue_cube", jitter([0.15, -0.05]), "blue", "cube"),
-            "green_cube": ObjectState("green_cube", jitter([0.00, -0.20]), "green", "cube"),
-            "plate": ObjectState("plate", np.array([0.25, 0.20, 0.005]), "white", "plate"),
+            "red_cube": ObjectState("red_cube", jitter([0.05, -0.05]), "red", "cube"),
+            "blue_cube": ObjectState("blue_cube", jitter([-0.05, -0.15]), "blue", "cube"),
+            "green_cube": ObjectState("green_cube", jitter([0.10, -0.20]), "green", "cube"),
+            "plate": ObjectState("plate", np.array([-0.02, 0.18, 0.005]), "white", "plate"),
         }
         self.state = _FakeState(objects, None, copy.deepcopy(self._slippery_init))
 
@@ -68,7 +69,7 @@ class FakeWorld:
             obj = s.objects.get(action.target)
             if obj is None:
                 return SkillResult(False, f"unknown object {action.target}")
-            if np.linalg.norm(obj.position[:2]) > REACH_RADIUS:
+            if np.linalg.norm(obj.position[:2] - ROBOT_BASE_XY) > REACH_RADIUS:
                 return SkillResult(False, "target out of reach (IK failed)")
             if s.holding is not None:
                 return SkillResult(False, "gripper already holding")

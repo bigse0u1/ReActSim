@@ -41,6 +41,7 @@ class ManiSkillWorld:
             env = RecordEpisode(env, output_dir=record_dir, save_trajectory=False,
                                 save_video=True, video_fps=30)
         self.env = env
+        self._record = bool(record_dir)
         self.vis = vis
         self.skills: PandaSkills | None = None
         self._last_obs = None
@@ -108,12 +109,15 @@ class ManiSkillWorld:
         actor = self.u.objects.get(event.object)
         if actor is None:
             return
+        if self._holding() == event.object:
+            self.skills.planner.open_gripper()   # a knock frees a held object
         p = _np(actor.pose.p[0])
-        if event.kind == "teleport":
-            actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy, CUBE_HALF]))
-        elif event.kind == "knock":
-            # TODO: apply an impulse instead of teleporting for a more physical look
-            actor.set_linear_velocity(np.array([[event.dx * 10, event.dy * 10, 0.5]]))
+        actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy, CUBE_HALF]))
+        if event.kind == "knock":
+            # TODO: replace the teleport with an impulse for a more physical look
+            actor.set_linear_velocity(np.array([[event.dx * 2, event.dy * 2, 0.0]]))
+        for _ in range(20):   # let it settle
+            self.env.step(_np(self.u.agent.robot.get_qpos()[:, :8]))
 
     def is_goal_satisfied(self, goal: Goal) -> bool:
         objs = self.u.objects
@@ -130,6 +134,16 @@ class ManiSkillWorld:
     def restore(self, snap) -> None:
         self.u.set_state_dict(snap)
         self.skills.reset_planner()
+
+    def set_recording(self, on: bool) -> None:
+        """Pause video capture while imagining so the video shows only real execution."""
+        if hasattr(self.env, "_save_video"):
+            self.env._save_video = on and self._record
+
+    def close(self) -> None:
+        if hasattr(self.env, "flush_video"):
+            self.env.flush_video()
+        self.env.close()
 
     def frame(self):
         f = self.env.render()

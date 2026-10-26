@@ -50,7 +50,12 @@ def main():
         threading.Thread(target=reader, daemon=True).start()
         print("Chaos Mode: type e.g. 'knock the red cube' and press Enter.")
 
-    rec = agent.run(args.instruction, seed)
+    try:
+        rec = agent.run(args.instruction, seed)
+    finally:
+        close = getattr(agent.world, "close", None)
+        if close:
+            close()   # flushes the recorded video
     save([rec], out)
     print(f"\nsuccess={rec.success} recoveries={rec.recovery_attempts} "
           f"llm_calls={rec.llm_calls} -> {out}")

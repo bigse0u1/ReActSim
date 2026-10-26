@@ -25,12 +25,13 @@ CUBE_HALF = 0.02
 PLATE_HALF = 0.06
 PLATE_THICK = 0.005
 
+# Robot base is at x=-0.615; Panda reaches ~0.85 m, so keep everything within ~0.7 m of it.
 CUBES = {
-    "red_cube": ([0.9, 0.1, 0.1, 1.0], [0.10, 0.15]),
-    "blue_cube": ([0.1, 0.2, 0.9, 1.0], [0.15, -0.05]),
-    "green_cube": ([0.1, 0.8, 0.2, 1.0], [0.00, -0.20]),
+    "red_cube": ([0.9, 0.1, 0.1, 1.0], [0.05, -0.05]),
+    "blue_cube": ([0.1, 0.2, 0.9, 1.0], [-0.05, -0.15]),
+    "green_cube": ([0.1, 0.8, 0.2, 1.0], [0.10, -0.20]),
 }
-PLATE_XY = [0.25, 0.20]
+PLATE_XY = [-0.02, 0.18]
 
 
 @register_env("ReActTabletop-v1", max_episode_steps=2000)

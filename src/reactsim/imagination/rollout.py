@@ -41,6 +41,8 @@ class Imagination:
         self.max_candidates = max_candidates
 
     def evaluate(self, candidates: list[Action], goal: Goal, step: int) -> list[Imagined]:
+        set_recording = getattr(self.world, "set_recording", lambda on: None)
+        set_recording(False)
         snap = self.world.snapshot()
         before = self.perception.perceive(self.world.observe(), step)
         out = []
@@ -54,6 +56,7 @@ class Imagination:
                 self.world.restore(snap)
         finally:
             self.world.restore(snap)
+            set_recording(True)
         return out
 
     def choose(self, candidates: list[Action], goal: Goal, step: int) -> tuple[Action, list[Imagined]]:

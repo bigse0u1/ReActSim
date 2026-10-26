@@ -8,15 +8,15 @@ version = "0.1.0"
 description = "A physics-grounded, self-correcting robot agent (Meta AI Developer Hackathon)"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy",
+    "numpy<2",   # mplib 0.1.1 segfaults with numpy 2
     "pyyaml",
     "httpx",
     "python-dotenv",
 ]
 
 [project.optional-dependencies]
-sim = ["mani_skill", "torch", "mplib"]
-viz = ["rerun-sdk"]
+sim = ["mani_skill==3.0.1", "torch", "mplib==0.1.1", "opencv-python<4.11"]
+viz = ["rerun-sdk<0.23"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]
