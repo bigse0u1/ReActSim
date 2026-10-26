@@ -1,0 +1,34 @@
+world: fake            # fake | maniskill
+seed: 0
+max_steps: 20
+max_replans: 4
+
+maniskill:
+  env_id: ReActTabletop-v1
+  render_mode: rgb_array   # human for GUI
+  sim_backend: cpu
+  record_video: true
+
+perception:
+  segmenter: oracle        # oracle | sam3
+  sam_model: sam-3.1       # TODO: verify model id at https://dev.meta.ai/docs/models
+
+planning:
+  planner: muse            # muse | rule | fixed
+  model: muse-spark        # TODO: verify model id at https://dev.meta.ai/docs/models
+  temperature: 0.2
+  max_invalid_retries: 2
+
+imagination:
+  enabled: true
+  max_candidates: 3
+
+chaos:
+  enabled: true
+  # Scripted events for reproducible benchmarks: {step: N, event: {...}}
+  scripted:
+    - step: 0
+      event: {kind: knock, object: red_cube, dx: 0.12, dy: -0.08}
+
+viz:
+  rerun: false

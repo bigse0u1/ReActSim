@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reactsim"
+version = "0.1.0"
+description = "A physics-grounded, self-correcting robot agent (Meta AI Developer Hackathon)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pyyaml",
+    "httpx",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+sim = ["mani_skill", "torch", "mplib"]
+viz = ["rerun-sdk"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
