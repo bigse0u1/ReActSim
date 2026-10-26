@@ -1,13 +1,12 @@
-"""ReActTabletop-v1: Panda + three colored cubes + a plate.
+"""ReActTabletop-v1: Panda + everyday YCB objects (banana, mug, soup can) + a plate.
 
-Distractor cubes matter: with a single cube, language grounding is trivial and
-SAM 3.1 contributes nothing a judge can see.
-
-Written against the ManiSkill 3 API (PickCube-v1 is the reference). Verify on
-first install; the TODOs mark the spots most likely to need adjustment.
+Real object shapes matter twice: SAM 3.1 has something non-trivial to segment,
+and different shapes favour different grasps, which gives Imagination real choices.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 import sapien
@@ -16,22 +15,32 @@ from mani_skill.agents.robots import Panda
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
-from mani_skill.utils.building import actors
+from mani_skill.utils.building.actors.common import get_actor_builder
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs.pose import Pose
 
-CUBE_HALF = 0.02
-PLATE_HALF = 0.06
-PLATE_THICK = 0.005
 
-# Robot base is at x=-0.615; Panda reaches ~0.85 m, so keep everything within ~0.7 m of it.
-CUBES = {
-    "red_cube": ([0.9, 0.1, 0.1, 1.0], [0.05, -0.05]),
-    "blue_cube": ([0.1, 0.2, 0.9, 1.0], [-0.05, -0.15]),
-    "green_cube": ([0.1, 0.8, 0.2, 1.0], [0.10, -0.20]),
+@dataclass(frozen=True)
+class ObjectSpec:
+    ycb_id: str
+    kind: str
+    color: str
+    xy: tuple[float, float]
+    half_height: float        # from the YCB bbox; the model origin is the bbox centre
+    yaw_range: float = 0.0    # random yaw +/- this (rad)
+
+
+# Robot base is at x=-0.615; Panda reaches ~0.85 m, so keep everything within ~0.75 m of it.
+OBJECTS = {
+    "banana": ObjectSpec("011_banana", "banana", "yellow", (0.05, -0.06), 0.0189, np.pi / 4),
+    "mug": ObjectSpec("025_mug", "mug", "red", (-0.10, -0.14), 0.0407, np.pi),
+    "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
+    "plate": ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147),
 }
-PLATE_XY = [-0.02, 0.18]
+PLATE_RADIUS = 0.13
+PLATE_TOP = 2 * OBJECTS["plate"].half_height
+XY_JITTER = 0.03
 
 
 @register_env("ReActTabletop-v1", max_episode_steps=2000)
@@ -61,35 +70,35 @@ class ReActTabletopEnv(BaseEnv):
         self.table_scene = TableSceneBuilder(self, robot_init_qpos_noise=self.robot_init_qpos_noise)
         self.table_scene.build()
         self.objects = {}
-        for name, (color, xy) in CUBES.items():
-            self.objects[name] = actors.build_cube(
-                self.scene, half_size=CUBE_HALF, color=color, name=name,
-                initial_pose=sapien.Pose(p=[*xy, CUBE_HALF]),
-            )
-        self.objects["plate"] = actors.build_box(
-            self.scene, half_sizes=[PLATE_HALF, PLATE_HALF, PLATE_THICK],
-            color=[0.95, 0.95, 0.95, 1.0], name="plate", body_type="kinematic",
-            initial_pose=sapien.Pose(p=[*PLATE_XY, PLATE_THICK]),
-        )
+        for name, spec in OBJECTS.items():
+            builder = get_actor_builder(self.scene, id=f"ycb:{spec.ycb_id}")
+            builder.initial_pose = sapien.Pose(p=[*spec.xy, spec.half_height])
+            # The plate is fixed so a dropped object cannot shove it away.
+            self.objects[name] = (builder.build_kinematic(name=name) if name == "plate"
+                                  else builder.build(name=name))
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
-            for name, (_, xy) in CUBES.items():
+            for name, spec in OBJECTS.items():
+                if name == "plate":
+                    continue
                 xyz = torch.zeros((b, 3))
-                xyz[:, :2] = torch.tensor(xy) + (torch.rand((b, 2)) - 0.5) * 0.06
-                xyz[:, 2] = CUBE_HALF
-                self.objects[name].set_pose(Pose.create_from_pq(xyz, [1, 0, 0, 0]))
+                xyz[:, :2] = torch.tensor(spec.xy) + (torch.rand((b, 2)) - 0.5) * 2 * XY_JITTER
+                xyz[:, 2] = spec.half_height
+                yaw = (torch.rand(b) * 2 - 1) * spec.yaw_range
+                q = torch.stack([torch.cos(yaw / 2), torch.zeros(b), torch.zeros(b), torch.sin(yaw / 2)], 1)
+                self.objects[name].set_pose(Pose.create_from_pq(xyz, q))
 
     def evaluate(self):
-        # Default task: red cube on plate. The agent uses its own Goal-based checker;
+        # Default task: banana on plate. The agent uses its own Goal-based checker;
         # this keeps ManiSkill's success flag meaningful for recorded videos.
-        cube = self.objects["red_cube"].pose.p
+        obj = self.objects["banana"].pose.p
         plate = self.objects["plate"].pose.p
-        on_xy = torch.all(torch.abs(cube[:, :2] - plate[:, :2]) < PLATE_HALF, dim=1)
-        above = cube[:, 2] > plate[:, 2] + PLATE_THICK
-        grasped = self.agent.is_grasping(self.objects["red_cube"])
+        on_xy = torch.linalg.norm(obj[:, :2] - plate[:, :2], dim=1) < PLATE_RADIUS * 0.8
+        above = obj[:, 2] > PLATE_TOP
+        grasped = self.agent.is_grasping(self.objects["banana"])
         return {"success": on_xy & above & ~grasped}
 
     def _get_obs_extra(self, info: dict):

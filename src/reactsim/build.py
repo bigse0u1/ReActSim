@@ -22,7 +22,7 @@ def load_config(path: str | Path) -> dict:
 def build_world(cfg: dict, out_dir: str | None = None):
     if cfg["world"] == "fake":
         from reactsim.worlds.fake import FakeWorld
-        return FakeWorld(slippery={"red_cube": {"top"}})   # forces one grasp failure to recover from
+        return FakeWorld(slippery={"banana": {"top"}})   # forces one grasp failure to recover from
     from reactsim.worlds.maniskill import ManiSkillWorld
     m = cfg["maniskill"]
     return ManiSkillWorld(m["env_id"], m["render_mode"], m["sim_backend"],

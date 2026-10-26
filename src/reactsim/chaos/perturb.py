@@ -2,7 +2,7 @@
 
 Three sources of perturbation:
   * scripted  — fixed step/event pairs, for reproducible benchmarks
-  * human     — anyone types "knock the red cube off" during a live demo
+  * human     — anyone types "knock the banana off" during a live demo
   * adversary — (stretch) a second Muse Spark prompt that tries to make the robot fail
 """
 

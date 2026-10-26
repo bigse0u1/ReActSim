@@ -47,11 +47,12 @@ class FakeWorld:
         def jitter(xy):
             return np.array([*(np.array(xy) + rng.uniform(-0.03, 0.03, 2)), TABLE_Z])
 
+        # Same names and layout as ReActTabletop-v1.
         objects = {
-            "red_cube": ObjectState("red_cube", jitter([0.05, -0.05]), "red", "cube"),
-            "blue_cube": ObjectState("blue_cube", jitter([-0.05, -0.15]), "blue", "cube"),
-            "green_cube": ObjectState("green_cube", jitter([0.10, -0.20]), "green", "cube"),
-            "plate": ObjectState("plate", np.array([-0.02, 0.18, 0.005]), "white", "plate"),
+            "banana": ObjectState("banana", jitter([0.05, -0.06]), "yellow", "banana"),
+            "mug": ObjectState("mug", jitter([-0.10, -0.14]), "red", "mug"),
+            "can": ObjectState("can", jitter([0.12, -0.20]), "red and white", "can"),
+            "plate": ObjectState("plate", np.array([0.0, 0.17, 0.015]), "red", "plate"),
         }
         self.state = _FakeState(objects, None, copy.deepcopy(self._slippery_init))
 

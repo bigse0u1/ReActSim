@@ -7,7 +7,7 @@ import numpy as np
 
 import reactsim.envs.tabletop  # noqa: F401  (registers ReActTabletop-v1)
 from reactsim.control.skills import PandaSkills
-from reactsim.envs.tabletop import CUBE_HALF, PLATE_HALF, PLATE_THICK
+from reactsim.envs.tabletop import OBJECTS, PLATE_RADIUS, PLATE_TOP
 from reactsim.types import (
     Action,
     ActionType,
@@ -18,7 +18,7 @@ from reactsim.types import (
     SkillResult,
 )
 
-COLORS = {"red_cube": "red", "blue_cube": "blue", "green_cube": "green", "plate": "white"}
+PLACE_CLEARANCE = 0.02   # release the held object this far above the plate
 
 
 def _np(x):
@@ -70,8 +70,9 @@ class ManiSkillWorld:
         holding = self._holding()
         gt = {}
         for name, actor in self.u.objects.items():
-            gt[name] = ObjectState(name, _np(actor.pose.p[0]), COLORS[name],
-                                   "plate" if name == "plate" else "cube", held=name == holding)
+            spec = OBJECTS[name]
+            gt[name] = ObjectState(name, _np(actor.pose.p[0]), spec.color, spec.kind,
+                                   held=name == holding)
         return Observation(
             rgb=_np(cam["rgb"][0]).astype(np.uint8),
             depth=_np(cam["depth"][0, ..., 0]).astype(np.float32) / 1000.0,  # mm -> m
@@ -93,7 +94,15 @@ class ManiSkillWorld:
             return s.pick(objs[action.target], action.grasp)
         if t == ActionType.PLACE_ON:
             ref = _np(objs[action.reference].pose.p[0])
-            return s.place_on(ref + np.array([0, 0, PLATE_THICK + CUBE_HALF]))
+            held = self._holding()
+            # Keep the object's current hang below the gripper; lower until its bottom clears the plate.
+            hang = 0.0
+            if held is not None:
+                tcp_z = float(self.u.agent.tcp.pose.p[0, 2])
+                bottom = float(objs[held].pose.p[0, 2]) - OBJECTS[held].half_height
+                hang = tcp_z - bottom
+            release_z = PLATE_TOP + PLACE_CLEARANCE + hang
+            return s.place_on(np.array([ref[0], ref[1], release_z]), drop_height=0.0)
         if t == ActionType.PUSH_ASIDE:
             return s.push_aside(objs[action.target])
         if t == ActionType.HOME:
@@ -112,7 +121,8 @@ class ManiSkillWorld:
         if self._holding() == event.object:
             self.skills.planner.open_gripper()   # a knock frees a held object
         p = _np(actor.pose.p[0])
-        actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy, CUBE_HALF]))
+        q = _np(actor.pose.q[0])
+        actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy, OBJECTS[event.object].half_height], q=q))
         if event.kind == "knock":
             # TODO: replace the teleport with an impulse for a more physical look
             actor.set_linear_velocity(np.array([[event.dx * 2, event.dy * 2, 0.0]]))
@@ -126,7 +136,8 @@ class ManiSkillWorld:
             return False
         po, pr = _np(obj.pose.p[0]), _np(ref.pose.p[0])
         resting = np.linalg.norm(_np(obj.linear_velocity[0])) < 0.05
-        return bool(np.all(np.abs(po[:2] - pr[:2]) < PLATE_HALF) and po[2] > pr[2] and resting)
+        on_xy = np.linalg.norm(po[:2] - pr[:2]) < PLATE_RADIUS * 0.8
+        return bool(on_xy and po[2] > PLATE_TOP and resting)
 
     def snapshot(self):
         return self.u.get_state_dict()

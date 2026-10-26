@@ -27,7 +27,7 @@ class Segmenter(Protocol):
 
 
 class OracleSegmenter:
-    """prompt ("red cube") -> actor name ("red_cube") -> GT segmentation id."""
+    """prompt ("banana") -> actor name ("banana") -> GT segmentation id."""
 
     def __init__(self, seg_ids: dict[str, int]):
         self.seg_ids = seg_ids

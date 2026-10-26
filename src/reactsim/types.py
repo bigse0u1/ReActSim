@@ -11,10 +11,10 @@ import numpy as np
 
 @dataclass
 class ObjectState:
-    name: str                      # stable id, e.g. "red_cube"
+    name: str                      # stable id, e.g. "banana"
     position: np.ndarray           # world xyz (m)
     color: str = ""
-    kind: str = ""                 # cube | plate | ...
+    kind: str = ""                 # banana | mug | can | plate | ...
     held: bool = False
     source: str = "gt"             # gt | depth (how position was estimated)
     confidence: float = 1.0

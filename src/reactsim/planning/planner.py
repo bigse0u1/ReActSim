@@ -62,10 +62,10 @@ class MusePlanner:
 
 
 def _parse_goal_keywords(instruction: str, state: WorldState) -> Goal:
-    """Baseline goal parsing: first cube whose color word appears; plate as reference."""
+    """Baseline goal parsing: first non-plate object named in the instruction; plate as reference."""
     text = instruction.lower()
     target = next((o.name for o in state.objects.values()
-                   if o.kind == "cube" and o.color and o.color in text), None)
+                   if o.kind != "plate" and (o.name.replace("_", " ") in text or o.kind in text)), None)
     reference = next((o.name for o in state.objects.values() if o.kind == "plate"), None)
     if target is None or reference is None:
         raise PlanValidationError(f"keyword parser could not ground: {instruction!r}")

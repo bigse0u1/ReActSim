@@ -20,7 +20,7 @@ from reactsim.evaluation.metrics import save  # noqa: E402
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
-    ap.add_argument("--instruction", default="Put the red cube on the target plate")
+    ap.add_argument("--instruction", default="Put the banana on the plate")
     ap.add_argument("--world", choices=["fake", "maniskill"])
     ap.add_argument("--planner", choices=["muse", "rule", "fixed"])
     ap.add_argument("--seed", type=int)
@@ -48,7 +48,7 @@ def main():
             for line in sys.stdin:
                 agent.chaos.submit(line.strip())
         threading.Thread(target=reader, daemon=True).start()
-        print("Chaos Mode: type e.g. 'knock the red cube' and press Enter.")
+        print("Chaos Mode: type e.g. 'knock the banana' and press Enter.")
 
     try:
         rec = agent.run(args.instruction, seed)

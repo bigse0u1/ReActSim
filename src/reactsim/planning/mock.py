@@ -24,8 +24,9 @@ class MockMuseClient:
         state = json.loads(re.search(r"state: (\{.*\})", user).group(1))
         objs = {o["name"]: o for o in state["objects"]}
         text = user.lower()
-        target = next((n for n, o in objs.items() if o["kind"] == "cube" and o["color"] in text),
-                      "red_cube")
+        target = next((n for n, o in objs.items()
+                       if o["kind"] != "plate" and (n.replace("_", " ") in text or o["kind"] in text)),
+                      next(n for n, o in objs.items() if o["kind"] != "plate"))
         plate = next(n for n, o in objs.items() if o["kind"] == "plate")
         grasp = "top"
         rationale = f"Pick {target} and place it on {plate}."

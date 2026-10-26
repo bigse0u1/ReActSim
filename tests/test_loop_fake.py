@@ -13,7 +13,7 @@ def _run(planner, imagine=True, chaos=True):
     cfg["imagination"]["enabled"] = imagine
     cfg["chaos"]["enabled"] = chaos
     agent = build_agent(cfg, offline=True)
-    return agent.run("Put the red cube on the target plate", seed=0)
+    return agent.run("Put the banana on the plate", seed=0)
 
 
 def test_fixed_baseline_fails_on_slippery_grasp():

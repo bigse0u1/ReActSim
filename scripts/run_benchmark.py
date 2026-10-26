@@ -23,7 +23,7 @@ def main():
     ap.add_argument("--seeds", type=int, default=10)
     ap.add_argument("--planners", default="fixed,rule,muse")
     ap.add_argument("--offline", action="store_true")
-    ap.add_argument("--instruction", default="Put the red cube on the target plate")
+    ap.add_argument("--instruction", default="Put the banana on the plate")
     args = ap.parse_args()
 
     try:
