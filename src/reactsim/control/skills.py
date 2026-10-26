@@ -25,6 +25,8 @@ except ImportError:  # pragma: no cover
     from mani_skill.examples.motionplanning.panda.motionplanner import PandaArmMotionPlanningSolver
 
 FINGER_LENGTH = 0.025
+GRASP_PITCH_DEG = {"angled": 50.0, "side": 0.0}   # "top" is straight down
+SIDE_GRASP_DZ = 0.01   # grip slightly above centre so the hand clears the table
 APPROACH_OFFSET = 0.08
 LIFT_HEIGHT = 0.15
 
@@ -52,22 +54,35 @@ class PandaSkills:
     def _ok(res) -> bool:
         return not (isinstance(res, int) and res == -1)
 
+    def _approach(self, actor, grasp: str) -> tuple[np.ndarray, np.ndarray]:
+        """Approach direction and closing hint. Non-top grasps come from the robot's side,
+        pitched down; measured on ReActTabletop: 50° lifts reliably, 0° often slips."""
+        if grasp == "top":
+            closing = self.env.agent.tcp.pose.to_transformation_matrix()[0, :3, 1].cpu().numpy()
+            return np.array([0.0, 0.0, -1.0]), closing
+        p, base = actor.pose.sp.p, self.env.agent.robot.pose.sp.p
+        h = np.array([p[0] - base[0], p[1] - base[1], 0.0])
+        h /= np.linalg.norm(h)
+        pitch = np.deg2rad(GRASP_PITCH_DEG[grasp])
+        approaching = h * np.cos(pitch) + np.array([0.0, 0.0, -np.sin(pitch)])
+        closing = np.cross(approaching, [0.0, 0.0, 1.0])
+        return approaching, closing / np.linalg.norm(closing)
+
     def pick(self, actor, grasp: str = "top") -> SkillResult:
         t0 = time.time()
         env = self.env
         obb = get_actor_obb(actor)
-        if grasp == "side":
-            approaching = np.array([1.0, 0.0, 0.0])   # TODO: choose side from robot->object direction
-        else:
-            approaching = np.array([0.0, 0.0, -1.0])
-        target_closing = env.agent.tcp.pose.to_transformation_matrix()[0, :3, 1].cpu().numpy()
+        approaching, target_closing = self._approach(actor, grasp)
         info = compute_grasp_info_by_obb(obb, approaching=approaching,
                                          target_closing=target_closing, depth=FINGER_LENGTH)
-        grasp_pose = env.agent.build_grasp_pose(approaching, info["closing"], actor.pose.sp.p)
+        center = actor.pose.sp.p + np.array([0.0, 0.0, 0.0 if grasp == "top" else SIDE_GRASP_DZ])
+        grasp_pose = env.agent.build_grasp_pose(approaching, info["closing"], center)
         reach_pose = grasp_pose * sapien.Pose([0, 0, -APPROACH_OFFSET])
 
         self.planner.open_gripper()
-        if not self._ok(self.planner.move_to_pose_with_screw(reach_pose)):
+        # A straight-line (screw) move cannot make large wrist rotations; fall back to RRT.
+        if not (self._ok(self.planner.move_to_pose_with_screw(reach_pose))
+                or self._ok(self.planner.move_to_pose_with_RRTConnect(reach_pose))):
             return SkillResult(False, "no path to pre-grasp", time.time() - t0)
         if not self._ok(self.planner.move_to_pose_with_screw(grasp_pose)):
             return SkillResult(False, "no path to grasp", time.time() - t0)

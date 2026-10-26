@@ -18,6 +18,7 @@ GOOD = '''```json
  "rationale": "ok",
  "actions": [{"type": "pick", "target": "red_cube"}, {"type": "place_on", "reference": "plate"}],
  "alternatives": [{"type": "pick", "target": "red_cube", "grasp": "side"},
+                  {"type": "pick", "target": "red_cube", "grasp": "sideways"},
                   {"type": "pick", "target": "ghost"}]}
 ```'''
 

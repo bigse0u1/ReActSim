@@ -55,6 +55,9 @@ class WorldState:
         }
 
 
+GRASP_MODES = ("top", "angled", "side")   # straight down / 50° from the robot side / horizontal
+
+
 class ActionType(str, Enum):
     PICK = "pick"
     PLACE_ON = "place_on"
@@ -70,7 +73,7 @@ class Action:
     type: ActionType
     target: str | None = None       # object to act on
     reference: str | None = None    # place_on destination
-    grasp: str = "top"              # top | side
+    grasp: str = "top"              # one of GRASP_MODES
     rationale: str = ""
 
     def short(self) -> str:

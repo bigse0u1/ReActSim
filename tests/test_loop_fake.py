@@ -29,7 +29,7 @@ def test_rule_baseline_recovers_by_retrying():
 def test_imagination_avoids_slippery_grasp():
     rec = _run("muse", imagine=True, chaos=False)
     assert rec.success and rec.recovery_attempts == 0
-    assert "[side]" in rec.steps[0]["action"]
+    assert "[top]" not in rec.steps[0]["action"]
 
 
 def test_muse_recovers_from_knock():

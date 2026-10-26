@@ -7,6 +7,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from reactsim.types import GRASP_MODES
+
 
 @dataclass
 class _Call:
@@ -29,7 +31,8 @@ class MockMuseClient:
         rationale = f"Pick {target} and place it on {plate}."
         if "failure: grasp_failed" in text:
             m = re.search(r'"grasp": "(\w+)"', user)
-            grasp = "side" if m and m.group(1) == "top" else "top"
+            failed = m.group(1) if m else "top"
+            grasp = GRASP_MODES[(GRASP_MODES.index(failed) + 1) % len(GRASP_MODES)]
             rationale = f"The {m.group(1) if m else 'previous'} grasp slipped; try a {grasp} grasp."
         elif "failure: object_moved" in text:
             rationale = f"{target} was moved; re-plan from its new position."
@@ -37,10 +40,10 @@ class MockMuseClient:
         if state["holding"] != target:
             actions.append({"type": "pick", "target": target, "grasp": grasp})
         actions.append({"type": "place_on", "reference": plate})
-        other = "side" if grasp == "top" else "top"
         return json.dumps({
             "goal": {"target": target, "relation": "on", "reference": plate},
             "rationale": rationale,
             "actions": actions,
-            "alternatives": [{"type": "pick", "target": target, "grasp": other}],
+            "alternatives": [{"type": "pick", "target": target, "grasp": g}
+                             for g in GRASP_MODES if g != grasp],
         })

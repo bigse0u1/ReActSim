@@ -10,11 +10,12 @@ import json
 import re
 from typing import Any
 
-from reactsim.types import Action, ActionType, Goal, Plan, WorldState
+from reactsim.types import GRASP_MODES, Action, ActionType, Goal, Plan, WorldState
 
 ACTION_SPEC = """\
 Allowed actions (JSON objects):
-  {"type": "pick", "target": <object>, "grasp": "top" | "side"}
+  {"type": "pick", "target": <object>, "grasp": "top" | "angled" | "side"}
+      # top: straight down. angled: 50° from the robot's side. side: horizontal.
   {"type": "place_on", "reference": <object>}          # places what is held
   {"type": "push_aside", "target": <object>}           # clear an obstacle
   {"type": "reobserve"}                                # look again before acting
@@ -50,7 +51,7 @@ def parse_action(d: dict[str, Any]) -> Action:
     except (KeyError, ValueError) as e:
         raise PlanValidationError(f"unknown action type: {d.get('type')!r}") from e
     grasp = d.get("grasp", "top")
-    if grasp not in ("top", "side"):
+    if grasp not in GRASP_MODES:
         raise PlanValidationError(f"unknown grasp {grasp!r}")
     return Action(t, d.get("target"), d.get("reference"), grasp, d.get("rationale", ""))
 

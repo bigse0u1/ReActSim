@@ -11,7 +11,7 @@ from reactsim.evaluation.metrics import EpisodeRecord
 from reactsim.imagination.rollout import Imagination
 from reactsim.perception.grounding import Perception
 from reactsim.planning.schema import PlanValidationError
-from reactsim.types import Action, ActionType, FailureReport, FailureType
+from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType
 from reactsim.viz.dashboard import Dashboard
 
 
@@ -35,7 +35,7 @@ class ReActAgent:
         if action.type != ActionType.PICK:
             return [action]
         cands = [action] + [a for a in alternatives if a.type == ActionType.PICK]
-        for g in ("top", "side"):
+        for g in GRASP_MODES:
             cands.append(dataclasses.replace(action, grasp=g, rationale="grasp variant"))
         seen, out = set(), []
         for c in cands:

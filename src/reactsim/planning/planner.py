@@ -6,7 +6,7 @@ import json
 from typing import Protocol
 
 from reactsim.planning.schema import ACTION_SPEC, PlanValidationError, parse_plan
-from reactsim.types import Action, ActionType, FailureReport, FailureType, Goal, Plan, WorldState
+from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType, Goal, Plan, WorldState
 
 SYSTEM_PROMPT = f"""\
 You are the high-level planner of a Franka Panda robot on a tabletop.
@@ -94,7 +94,7 @@ class FixedPlanner:
 
 
 class RuleBasedPlanner(FixedPlanner):
-    """Baseline B: re-observe and retry the same skill sequence, alternating grasp."""
+    """Baseline B: re-observe and retry the same skill sequence, cycling grasp modes on grasp failure."""
 
     def __init__(self):
         self.retries = 0
@@ -107,5 +107,5 @@ class RuleBasedPlanner(FixedPlanner):
     def replan(self, instruction, goal, state, history, failure):
         self.retries += 1
         self.grasp_failures += failure.type == FailureType.GRASP_FAILED
-        grasp = "side" if self.grasp_failures % 2 else "top"
+        grasp = GRASP_MODES[self.grasp_failures % len(GRASP_MODES)]
         return Plan(goal, _pick_place(goal, state, grasp), f"rule retry #{self.retries}"), []
