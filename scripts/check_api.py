@@ -22,14 +22,14 @@ def check_muse(model: str) -> None:
     print(f"[muse] {model}: {text.strip()[:80]!r}  ({client.calls[-1].latency_s:.1f}s, usage={client.calls[-1].usage})")
 
 
-def check_sam(model: str, prompts: list[str]) -> None:
+def check_sam(model: str, prompts: list[str], scene: str = "kitchen") -> None:
     import numpy as np
     from PIL import Image
 
     from reactsim.perception.segmenter import OracleSegmenter, Sam3Segmenter
     from reactsim.worlds.maniskill import ManiSkillWorld
 
-    world = ManiSkillWorld(record_dir=None)
+    world = ManiSkillWorld(record_dir=None, scene=scene)
     world.reset(0)
     obs = world.observe()
     oracle = OracleSegmenter(world.segmentation_ids(), world.sam_aliases())
@@ -39,7 +39,7 @@ def check_sam(model: str, prompts: list[str]) -> None:
     sam = Sam3Segmenter(model)
     masks = sam.segment(obs.rgb, prompts)
     overlay = obs.rgb.astype(float)
-    colors = [(255, 0, 0), (0, 255, 0), (0, 128, 255), (255, 0, 255)]
+    colors = [(255, 0, 0), (0, 255, 0), (0, 128, 255), (255, 0, 255), (255, 255, 0)]
     for i, p in enumerate(prompts):
         m = masks.get(p)
         if m is None:
@@ -60,7 +60,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--muse-model", default="muse-spark-1.3")
     ap.add_argument("--sam-model", default="sam-3.1")
-    ap.add_argument("--prompts", default="banana,cup,can,plate")
+    ap.add_argument("--scene", default="kitchen", choices=["kitchen", "home"])
+    ap.add_argument("--prompts", help="default: every object's SAM prompt in the scene")
     ap.add_argument("--skip-muse", action="store_true")
     ap.add_argument("--skip-sam", action="store_true")
     args = ap.parse_args()
@@ -72,7 +73,10 @@ def main():
     if not args.skip_muse:
         check_muse(args.muse_model)
     if not args.skip_sam:
-        check_sam(args.sam_model, args.prompts.split(","))
+        from reactsim.envs.tabletop import SCENES
+        prompts = (args.prompts.split(",") if args.prompts
+                   else [s.sam_prompt or n for n, s in SCENES[args.scene].items()])
+        check_sam(args.sam_model, prompts, args.scene)
 
 
 if __name__ == "__main__":

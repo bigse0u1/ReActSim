@@ -8,7 +8,7 @@ import numpy as np
 import reactsim.envs.tabletop  # noqa: F401  (registers ReActTabletop-v1)
 from reactsim.control.skills import PandaSkills
 from reactsim.envs.tabletop import (
-    CHAOS_BALL_PARK, CHAOS_BALL_RADIUS, OBJECTS, ON_PLATE_LIFT, PLATE_RADIUS, PLATE_TOP,
+    CHAOS_BALL_PARK, CHAOS_BALL_RADIUS, ON_PLATE_LIFT, PLATE_RADIUS, PLATE_TOP,
 )
 from reactsim.types import (
     Action,
@@ -26,6 +26,22 @@ THROW_RISE = 0.2         # ... and this much higher
 THROW_TIME = 0.10        # flight time (s) -> ~6 m/s; frees a held banana in 4/4 seeds. At ~4 m/s the
                          # higher arc sometimes flings the banana off the table and the mug with it.
 KNOCK_END_OFFSET = 0.07  # aim this far from an elongated object's centre, to twist it
+UPRIGHT_KINDS = {"can", "cup", "mug"}   # must end standing; a tipped-over cup is not "on the plate"
+MAX_TILT_DEG = 30.0
+
+
+class _ActionLog(gym.Wrapper):
+    """Records the joint commands the motion planner sends, so an imagined skill can be
+    replayed exactly instead of re-planned (RRT is random and could find another path)."""
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.log: list | None = None
+
+    def step(self, action):
+        if self.log is not None:
+            self.log.append(np.array(action, copy=True))
+        return self.env.step(action)
 
 
 def _np(x):
@@ -34,9 +50,10 @@ def _np(x):
 
 class ManiSkillWorld:
     def __init__(self, env_id="ReActTabletop-v1", render_mode="rgb_array",
-                 sim_backend="cpu", record_dir: str | None = None, vis=False):
+                 sim_backend="cpu", record_dir: str | None = None, vis=False, scene="kitchen"):
         env = gym.make(
             env_id,
+            scene=scene,
             obs_mode="rgb+depth+segmentation",
             control_mode="pd_joint_pos",   # required by the mplib motion planner
             render_mode=render_mode,
@@ -52,6 +69,8 @@ class ManiSkillWorld:
         self.vis = vis
         self.skills: PandaSkills | None = None
         self._last_obs = None
+        self._actions = _ActionLog(env)   # the planner steps through this
+        self.last_trace = None            # (joint commands, result) of the last execute()
 
     @property
     def u(self):
@@ -60,7 +79,7 @@ class ManiSkillWorld:
     def reset(self, seed: int) -> None:
         self._last_obs, _ = self.env.reset(seed=seed)
         if self.skills is None:
-            self.skills = PandaSkills(self.env, vis=self.vis)
+            self.skills = PandaSkills(self._actions, vis=self.vis)
         else:
             self.skills.reset_planner()
 
@@ -77,7 +96,7 @@ class ManiSkillWorld:
         holding = self._holding()
         gt = {}
         for name, actor in self.u.objects.items():
-            spec = OBJECTS[name]
+            spec = self.u.specs[name]
             gt[name] = ObjectState(name, _np(actor.pose.p[0]), spec.color, spec.kind,
                                    held=name == holding, prompt=spec.sam_prompt or name)
         return Observation(
@@ -96,9 +115,28 @@ class ManiSkillWorld:
 
     def sam_aliases(self) -> dict[str, str]:
         """SAM prompt -> actor name, for objects whose prompt differs from their name."""
-        return {s.sam_prompt: n for n, s in OBJECTS.items() if s.sam_prompt}
+        return {s.sam_prompt: n for n, s in self.u.specs.items() if s.sam_prompt}
 
     def execute(self, action: Action) -> SkillResult:
+        self._actions.log = []
+        try:
+            result = self._execute(action)
+        finally:
+            commands, self._actions.log = self._actions.log, None
+        self.last_trace = (commands, result)
+        return result
+
+    def replay(self, trace) -> SkillResult:
+        """Re-run the joint commands of an imagined execute() from the same state.
+        CPU physics is deterministic, so the outcome is the one that was imagined."""
+        commands, result = trace
+        for a in commands:
+            self.env.step(a)
+        if commands:
+            self.skills.planner.gripper_state = float(commands[-1][-1])
+        return result
+
+    def _execute(self, action: Action) -> SkillResult:
         s, objs = self.skills, self.u.objects
         t = action.type
         if t == ActionType.PICK:
@@ -112,7 +150,7 @@ class ManiSkillWorld:
             hang = 0.0
             if held is not None:
                 tcp_z = float(self.u.agent.tcp.pose.p[0, 2])
-                bottom = float(objs[held].pose.p[0, 2]) - OBJECTS[held].half_height
+                bottom = float(objs[held].pose.p[0, 2]) - self.u.specs[held].half_height
                 hang = tcp_z - bottom
             release_z = PLATE_TOP + PLACE_CLEARANCE + hang
             return s.place_on(np.array([ref[0], ref[1], release_z]), drop_height=0.0)
@@ -136,7 +174,7 @@ class ManiSkillWorld:
         else:  # teleport: someone moved it while nobody was looking
             p, q = _np(actor.pose.p[0]), _np(actor.pose.q[0])
             actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy,
-                                          OBJECTS[event.object].half_height], q=q))
+                                          self.u.specs[event.object].half_height], q=q))
         self._hold(20)   # let it settle
 
     def _hold(self, steps: int) -> None:
@@ -155,7 +193,7 @@ class ManiSkillWorld:
         ball = self.u.chaos_ball
         d = push_xy / (np.linalg.norm(push_xy) + 1e-9)
         aim = _np(actor.pose.p[0]).copy()
-        if OBJECTS[self._name_of(actor)].kind == "banana":
+        if self.u.specs[self._name_of(actor)].kind == "banana":
             R = sapien.Pose(q=_np(actor.pose.q[0])).to_transformation_matrix()[:3, :3]
             long_axis = R[:, 1] * np.array([1.0, 1.0, 0.0])        # YCB banana is long along y
             if np.linalg.norm(long_axis) > 1e-3:
@@ -198,9 +236,9 @@ class ManiSkillWorld:
         po, pr = _np(obj.pose.p[0]), _np(ref.pose.p[0])
         dist = float(np.linalg.norm(po[:2] - pr[:2]))
         # Not "above the rim": the plate is concave, so a banana lying in it sits below rim height.
-        min_z = OBJECTS[goal.target].half_height + ON_PLATE_LIFT
+        min_z = self.u.specs[goal.target].half_height + ON_PLATE_LIFT
         speed = float(np.linalg.norm(_np(obj.linear_velocity[0])))
-        return {
+        report = {
             "released": {"ok": self._holding() != goal.target, "value": self._holding()},
             "over_reference": {"ok": dist < PLATE_RADIUS * 0.8, "value_cm": round(dist * 100, 1),
                                "need_below_cm": round(PLATE_RADIUS * 80, 1)},
@@ -208,6 +246,13 @@ class ManiSkillWorld:
                             "need_above_cm": round(min_z * 100, 1)},
             "at_rest": {"ok": speed < 0.05, "value_m_s": round(speed, 3)},
         }
+        if self.u.specs[goal.target].kind in UPRIGHT_KINDS:
+            import sapien
+            up = sapien.Pose(q=_np(obj.pose.q[0])).to_transformation_matrix()[:3, 2]
+            tilt = float(np.degrees(np.arccos(min(abs(up[2]), 1.0))))
+            report["upright"] = {"ok": tilt < MAX_TILT_DEG, "tilt_deg": round(tilt, 1),
+                                 "need_below_deg": MAX_TILT_DEG}
+        return report
 
     def snapshot(self):
         return self.u.get_state_dict()

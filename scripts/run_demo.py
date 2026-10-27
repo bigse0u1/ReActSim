@@ -13,17 +13,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from reactsim.build import build_agent, load_config  # noqa: E402
+from reactsim.build import build_agent, default_instruction, load_config  # noqa: E402
 from reactsim.evaluation.metrics import save  # noqa: E402
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
-    ap.add_argument("--instruction", default="Put the banana on the plate")
+    ap.add_argument("--instruction", default=None, help="default: put the scene's first object on the plate")
     ap.add_argument("--world", choices=["fake", "maniskill"])
     ap.add_argument("--planner", choices=["muse", "rule", "fixed"])
     ap.add_argument("--segmenter", choices=["oracle", "sam3"])
+    ap.add_argument("--scene", choices=["kitchen", "home"])
     ap.add_argument("--seed", type=int)
     ap.add_argument("--offline", action="store_true", help="use the mock Muse client (no API calls)")
     ap.add_argument("--chaos-stdin", action="store_true", help="read live perturbations from stdin")
@@ -41,6 +42,9 @@ def main():
         cfg["planning"]["planner"] = args.planner
     if args.segmenter:
         cfg["perception"]["segmenter"] = args.segmenter
+    if args.scene:
+        cfg["maniskill"]["scene"] = args.scene
+    instruction = args.instruction or default_instruction(cfg)
     seed = cfg["seed"] if args.seed is None else args.seed
 
     out = Path("outputs") / time.strftime("demo_%Y%m%d_%H%M%S")
@@ -54,7 +58,7 @@ def main():
         print("Chaos Mode: type e.g. 'knock the banana' and press Enter.")
 
     try:
-        rec = agent.run(args.instruction, seed)
+        rec = agent.run(instruction, seed)
     finally:
         close = getattr(agent.world, "close", None)
         if close:

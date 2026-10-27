@@ -21,13 +21,32 @@ Built for the **Meta Global AI Developer Hackathon**, *Push the Frontier* track.
 | Failure handling | Retry, or nothing | A typed diagnosis (grasp slip, object moved, drop, missed placement) plus a recovery aimed at that cause |
 
 ### 🧠 Imagination: real physics lookahead
-Before committing to a risky skill (for example choosing between a `top`, `angled` or `side` grasp), the agent snapshots the simulator state (`get_state_dict`). It runs each candidate forward and scores the result with the same diagnoser used at runtime. Then it restores the state and runs only the best option. This is actual simulation of the future, not a heuristic feasibility score. The dashboard shows the imagined outcomes side by side.
+Before committing to a risky skill (for example choosing between a `top`, `angled` or `side` grasp), the agent snapshots the simulator state (`get_state_dict`). It runs each candidate forward and scores the result with the same diagnoser used at runtime. Then it restores the state and runs only the best option. A grasp is imagined together with the placement that follows it, because a grasp that holds can still make the object tip over when set down. The real run then replays the exact joint commands of the winning rollout (motion planning is random; replaying makes what was imagined what happens, to within 0.3 mm). The planner's proposal stands when it works in physics and is overruled only when it fails. This is actual simulation of the future, not a heuristic feasibility score.
 
 ### 😈 Chaos Mode: the world fights back
 Anyone can type during a run: *"knock the banana off"*, *"make it drop it"*. Muse Spark turns the text into a bounded physical perturbation. A knock is a real projectile: a YCB baseball is thrown on a ballistic arc at the end of the banana, even while the robot is holding it, and the physics decides whether it twists out of the gripper (at ~6 m/s it did in 4/4 seeds). The robot is not told that anything happened; it has to notice from perception and physics. Scripted chaos makes the benchmarks reproducible.
 
 ### 🔍 Failure diagnosis it can explain
 Each skill states what should happen. The diagnoser compares that expectation with the observed state and produces a typed `FailureReport` with evidence. Muse Spark receives the report and must address the cause, not blindly repeat the action. When every step "worked" but the success check still fails, the report lists each physics condition with its measured value (e.g. `over_reference (value_cm=20.0)`), and a failure that repeats after the same action is flagged so the planner changes strategy; on the third repeat the agent stops and says why instead of looping.
+
+### 🎥 Show, don't tell: learn from a phone video
+Film yourself doing the task with your phone. The robot watches and does it too:
+
+1. **Muse Spark** looks at the first and last frames and names the objects as noun phrases SAM can find (with a fallback word: a green mandarin is "fruit" to SAM, not "orange").
+2. **SAM 3.1** tracks the hand and every object through the video (one upload, ~50 frames per prompt at 8 fps).
+3. Geometry on the masks finds the object that moved, the frame the hand took it, the frame it came to rest, and what it rests on.
+4. **Muse Spark** looks at crops of the grasp moment and names the human's grasp in the robot's vocabulary (`top` / `angled` / `side`).
+5. The robot gets the intent plus the human's grasp *as a hint*. A human hand has five fingers, the Panda two, so **Imagination** tries the human's grasp first and adapts when it fails for this body.
+
+Measured on three real clips (home scene, seed 0, Muse Spark + SAM 3.1, all succeeded with no recovery):
+
+| Clip | Human grasp (Muse) | Imagined for the robot | Robot used |
+|---|---|---|---|
+| mandarin → plate | angled | angled ✓, top ✓, side ✗ (no motion) | angled, as the human did |
+| drink can → plate | side | side ✗ (**can tipped over** after placing, 89.5°), top ✓, angled ✓ | angled |
+| paper cup → plate | side | side ✗ (lift failed), angled ✓, top ✓ | top |
+
+Each run writes `show_dont_tell.mp4`: the clip with SAM masks on the left, the robot on the right, and what was learned and imagined in between.
 
 ### 🤝 The LLM proposes, physics disposes
 Excerpt from a real run (Muse Spark `muse-spark-1.3`, ManiSkill, seed 0). The banana was knocked out of the gripper by Chaos Mode:
@@ -90,11 +109,12 @@ src/reactsim/
   perception/           SAM 3.1 / oracle segmenter; mask+depth → 3D
   planning/             Muse Spark client, prompt, JSON schema + validator, baselines
   control/skills.py     pick (top / angled / side) / place_on / push_aside on mplib
-  imagination/          fork-and-evaluate lookahead
+  imagination/          fork-and-evaluate lookahead (pick + place), exact replay
+  imitation/            Show, don't tell: video events + demonstration
   chaos/                scripted + natural-language perturbations
   evaluation/           failure diagnosis, metrics, episode logs
-  viz/dashboard.py      rerun.io live view (optional)
-scripts/                run_demo.py, run_benchmark.py, check_env.py, check_api.py
+  viz/                  rerun.io live view (optional), side-by-side imitation video
+scripts/                run_demo.py, run_benchmark.py, learn_from_video.py, check_env.py, check_api.py
 configs/default.yaml
 tests/
 ```
@@ -114,9 +134,11 @@ pip install -e ".[sim,viz]"
 python -m mani_skill.utils.download_asset ycb -y     # YCB objects (~85 MB)
 python scripts/check_env.py
 python scripts/run_demo.py --world maniskill --offline        # sim + mock planner
+python scripts/run_demo.py --world maniskill --offline --scene home   # orange, can, cup
 cp .env.example .env   # then put MODEL_API_KEY in .env (never in .env.example)
 python scripts/check_api.py                                    # one Muse call + SAM masks vs ground truth
 python scripts/run_demo.py --world maniskill --chaos-stdin    # sim + Muse Spark + live chaos
+python scripts/learn_from_video.py data/demos/can_side.mp4     # phone video -> robot (home scene)
 
 # Baseline comparison on identical seeds and perturbations
 python scripts/run_benchmark.py --world maniskill --seeds 20
@@ -159,7 +181,8 @@ SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation:
 - [x] SAM 3.1 inside the agent loop (`--segmenter sam3`): looks at the start, after each failure and on `reobserve`; positions from depth are 0.6–4.2 cm from ground truth
 - [ ] Grasp from perceived positions (planning uses SAM + depth; the pick skill still targets the simulator's object pose)
 - [ ] Mug grasps (the gripper aims at the hollow centre; needs rim or handle grasps)
-- [ ] *Show, don't tell*: learn the task from a phone video of a human hand (SAM 3.1 video tracking + Muse Spark)
+- [x] *Show, don't tell*: phone video of a human hand → SAM 3.1 video tracking + Muse Spark → robot, adapting the human's grasp through Imagination (3/3 clips)
+- [x] Imagination scores pick + place together and the real run replays the imagined joint commands
 - [ ] rerun dashboard with the imagined-outcomes view
 - [ ] Benchmark on ManiSkill and the demo video
 

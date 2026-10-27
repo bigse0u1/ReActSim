@@ -1,4 +1,7 @@
-"""ReActTabletop-v1: Panda + everyday YCB objects (banana, mug, soup can) + a plate.
+"""ReActTabletop-v1: Panda + everyday objects + a plate, in one of several scenes.
+
+Scenes: "kitchen" (banana, mug, soup can) and "home" (orange, soup can, cup),
+the second matching what is on hand for the human demonstration videos.
 
 Real object shapes matter twice: SAM 3.1 has something non-trivial to segment,
 and different shapes favour different grasps, which gives Imagination real choices.
@@ -15,7 +18,6 @@ from mani_skill.agents.robots import Panda
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
-from mani_skill.utils.building import actors
 from mani_skill.utils.building.actors.common import get_actor_builder
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
@@ -34,20 +36,33 @@ class ObjectSpec:
 
 
 # Robot base is at x=-0.615; Panda reaches ~0.85 m, so keep everything within ~0.75 m of it.
-OBJECTS = {
-    "banana": ObjectSpec("011_banana", "banana", "yellow", (0.05, -0.06), 0.0189, np.pi / 4),
-    # With the handle turned away the mug reads as a cup: "mug" finds nothing, "cup" gets IoU 0.99.
-    "mug": ObjectSpec("025_mug", "mug", "red", (-0.10, -0.14), 0.0407, np.pi, sam_prompt="cup"),
-    "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
-    "plate": ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147),
+PLATE = ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147)
+SCENES = {
+    "kitchen": {
+        "banana": ObjectSpec("011_banana", "banana", "yellow", (0.05, -0.06), 0.0189, np.pi / 4),
+        # With the handle turned away the mug reads as a cup: "mug" finds nothing, "cup" gets IoU 0.99.
+        "mug": ObjectSpec("025_mug", "mug", "red", (-0.10, -0.14), 0.0407, np.pi, sam_prompt="cup"),
+        "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
+        "plate": PLATE,
+    },
+    # Stand-ins for the real objects in the demo videos: drink can -> soup can,
+    # mandarin -> YCB orange, paper cup -> YCB cup (7.2 cm, fits the 8 cm gripper).
+    "home": {
+        # The YCB orange renders like a ball: "orange" and "fruit" find nothing, "ball" gets IoU 0.99.
+        "orange": ObjectSpec("017_orange", "orange", "orange", (0.05, -0.06), 0.0365, sam_prompt="ball"),
+        "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
+        "cup": ObjectSpec("065-d_cups", "cup", "yellow", (-0.10, -0.14), 0.036),
+        "plate": PLATE,
+    },
 }
+OBJECTS = {name: spec for scene in SCENES.values() for name, spec in scene.items()}   # name -> spec
 # Chaos ball: a YCB baseball thrown at objects, even out of the gripper. It floats (no
 # gravity) out of view until thrown, then flies a real ballistic arc.
 CHAOS_BALL_ID = "055_baseball"
 CHAOS_BALL_RADIUS = 0.037
 CHAOS_BALL_PARK = (3.0, 3.0, 0.5)    # behind both cameras
 PLATE_RADIUS = 0.13
-PLATE_TOP = 2 * OBJECTS["plate"].half_height   # rim height; the plate is concave inside
+PLATE_TOP = 2 * PLATE.half_height   # rim height; the plate is concave inside
 ON_PLATE_LIFT = 0.003   # an object on the plate sits at least this much higher than on the table
 XY_JITTER = 0.03
 
@@ -57,8 +72,9 @@ class ReActTabletopEnv(BaseEnv):
     SUPPORTED_ROBOTS = ["panda"]
     agent: Panda
 
-    def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, scene="kitchen", **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
+        self.specs = SCENES[scene]
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
     @property
@@ -79,7 +95,7 @@ class ReActTabletopEnv(BaseEnv):
         self.table_scene = TableSceneBuilder(self, robot_init_qpos_noise=self.robot_init_qpos_noise)
         self.table_scene.build()
         self.objects = {}
-        for name, spec in OBJECTS.items():
+        for name, spec in self.specs.items():
             builder = get_actor_builder(self.scene, id=f"ycb:{spec.ycb_id}")
             builder.initial_pose = sapien.Pose(p=[*spec.xy, spec.half_height])
             # The plate is fixed so a dropped object cannot shove it away.
@@ -96,7 +112,7 @@ class ReActTabletopEnv(BaseEnv):
         with torch.device(self.device):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
-            for name, spec in OBJECTS.items():
+            for name, spec in self.specs.items():
                 if name == "plate":
                     continue
                 xyz = torch.zeros((b, 3))
@@ -106,14 +122,19 @@ class ReActTabletopEnv(BaseEnv):
                 q = torch.stack([torch.cos(yaw / 2), torch.zeros(b), torch.zeros(b), torch.sin(yaw / 2)], 1)
                 self.objects[name].set_pose(Pose.create_from_pq(xyz, q))
 
+    @property
+    def default_target(self) -> str:
+        return next(iter(self.specs))
+
     def evaluate(self):
-        # Default task: banana on plate. The agent uses its own Goal-based checker;
-        # this keeps ManiSkill's success flag meaningful for recorded videos.
-        obj = self.objects["banana"].pose.p
+        # Default task: the scene's first object on the plate. The agent uses its own
+        # Goal-based checker; this keeps ManiSkill's success flag meaningful for videos.
+        name = self.default_target
+        obj = self.objects[name].pose.p
         plate = self.objects["plate"].pose.p
         on_xy = torch.linalg.norm(obj[:, :2] - plate[:, :2], dim=1) < PLATE_RADIUS * 0.8
-        above = obj[:, 2] > OBJECTS["banana"].half_height + ON_PLATE_LIFT
-        grasped = self.agent.is_grasping(self.objects["banana"])
+        above = obj[:, 2] > self.specs[name].half_height + ON_PLATE_LIFT
+        grasped = self.agent.is_grasping(self.objects[name])
         return {"success": on_xy & above & ~grasped}
 
     def _get_obs_extra(self, info: dict):

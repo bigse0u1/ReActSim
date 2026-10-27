@@ -31,8 +31,13 @@ class MetaChatClient:
         self.client = httpx.Client(timeout=timeout)
         self.calls: list[LLMCallLog] = []
 
-    def chat(self, system: str, user: str) -> str:
+    def chat(self, system: str, user: str, images: list | None = None) -> str:
+        """images: optional RGB uint8 arrays sent with the user message (Muse Spark is multimodal)."""
         t0 = time.time()
+        content = user
+        if images:
+            content = [{"type": "text", "text": user}] + [
+                {"type": "image_url", "image_url": {"url": _jpeg_data_url(im)}} for im in images]
         resp = self.client.post(
             f"{self.base_url}/chat/completions",
             headers={"Authorization": f"Bearer {self.api_key}"},
@@ -41,7 +46,7 @@ class MetaChatClient:
                 "temperature": self.temperature,
                 "messages": [
                     {"role": "system", "content": system},
-                    {"role": "user", "content": user},
+                    {"role": "user", "content": content},
                 ],
             },
         )
@@ -52,3 +57,14 @@ class MetaChatClient:
         self.calls.append(LLMCallLog(time.time() - t0, len(system) + len(user),
                                      len(text), data.get("usage", {})))
         return text
+
+
+def _jpeg_data_url(rgb) -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.fromarray(rgb).save(buf, format="JPEG", quality=90)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()

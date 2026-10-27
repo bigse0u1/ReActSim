@@ -84,7 +84,10 @@ class PandaSkills:
         if not (self._ok(self.planner.move_to_pose_with_screw(reach_pose))
                 or self._ok(self.planner.move_to_pose_with_RRTConnect(reach_pose))):
             return SkillResult(False, "no path to pre-grasp", time.time() - t0)
-        if not self._ok(self.planner.move_to_pose_with_screw(grasp_pose)):
+        # RRT reaches the pre-grasp in a random arm configuration, from which the straight
+        # final move can be infeasible; then plan it with RRT too (short, so nearly straight).
+        if not (self._ok(self.planner.move_to_pose_with_screw(grasp_pose))
+                or self._ok(self.planner.move_to_pose_with_RRTConnect(grasp_pose))):
             return SkillResult(False, "no path to grasp", time.time() - t0)
         self.planner.close_gripper()
         lift = sapien.Pose([0, 0, LIFT_HEIGHT]) * grasp_pose
@@ -99,7 +102,9 @@ class PandaSkills:
         above = sapien.Pose(p=ref_xyz + np.array([0, 0, LIFT_HEIGHT]), q=tcp_q)
         down = sapien.Pose(p=ref_xyz + np.array([0, 0, drop_height]), q=tcp_q)
         for pose, msg in ((above, "transport"), (down, "descend")):
-            if not self._ok(self.planner.move_to_pose_with_screw(pose)):
+            # A side-held object keeps the wrist horizontal, where straight moves often hit joint limits.
+            if not (self._ok(self.planner.move_to_pose_with_screw(pose))
+                    or self._ok(self.planner.move_to_pose_with_RRTConnect(pose))):
                 return SkillResult(False, f"{msg} failed", time.time() - t0)
         self.planner.open_gripper()
         self.planner.move_to_pose_with_screw(above)

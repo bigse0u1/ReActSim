@@ -9,6 +9,19 @@ from reactsim.types import Action, ActionType, FailureReport, FailureType, Skill
 MOVED_EPS = 0.03   # m an untouched object may drift before we call it "moved"
 
 
+def goal_not_met(world, goal, why: str) -> FailureReport:
+    """Explain which success condition failed, with the measured values."""
+    report = world.goal_report(goal)
+    unmet = {k: v for k, v in report.items() if not v["ok"]}
+    parts = []
+    for name, c in unmet.items():
+        vals = ", ".join(f"{k}={v}" for k, v in c.items() if k != "ok")
+        parts.append(f"{name} ({vals})" if vals else name)
+    return FailureReport(FailureType.GOAL_NOT_MET,
+                         f"{why}; unmet: {'; '.join(parts) or 'none'}",
+                         {"success_check": report})
+
+
 def diagnose(action: Action, result: SkillResult, before: WorldState,
              after: WorldState, goal_target: str) -> FailureReport:
     if not result.ok:

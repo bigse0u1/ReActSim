@@ -23,6 +23,7 @@ class EpisodeRecord:
     wall_time_s: float = 0.0
     stop_reason: str = ""
     steps: list[dict] = field(default_factory=list)
+    imagined: list[dict] = field(default_factory=list)   # what Imagination tried before each choice
 
 
 def summarize(records: list[EpisodeRecord]) -> dict:

@@ -6,29 +6,16 @@ import dataclasses
 import time
 
 from reactsim.chaos.perturb import Chaos
-from reactsim.evaluation.diagnosis import diagnose
+from reactsim.evaluation.diagnosis import diagnose, goal_not_met
 from reactsim.evaluation.metrics import EpisodeRecord
 from reactsim.imagination.rollout import Imagination
 from reactsim.perception.grounding import Perception
 from reactsim.planning.schema import PlanValidationError
-from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType
+from reactsim.types import GRASP_MODES, Action, ActionType
 from reactsim.viz.dashboard import Dashboard
 
 
 MAX_SAME_FAILURE = 3   # stop after the same failure follows the same action this many times
-
-
-def _goal_not_met(world, goal, why: str) -> FailureReport:
-    """Explain which success condition failed, with the measured values."""
-    report = world.goal_report(goal)
-    unmet = {k: v for k, v in report.items() if not v["ok"]}
-    parts = []
-    for name, c in unmet.items():
-        vals = ", ".join(f"{k}={v}" for k, v in c.items() if k != "ok")
-        parts.append(f"{name} ({vals})" if vals else name)
-    return FailureReport(FailureType.GOAL_NOT_MET,
-                         f"{why}; unmet: {'; '.join(parts) or 'none'}",
-                         {"success_check": report})
 
 
 class ReActAgent:
@@ -78,6 +65,7 @@ class ReActAgent:
         self.dash.text(step, "plan", f"{[a.short() for a in queue]} — {plan.rationale}")
 
         replans = 0
+        pending_replay = None   # (follow-up action, its imagined trace)
         repeats: dict[tuple, int] = {}
         last_action = None
         while step < self.max_steps:
@@ -88,7 +76,7 @@ class ReActAgent:
 
             failure = None
             if not queue:
-                failure = _goal_not_met(self.world, goal, "plan finished but the success check fails")
+                failure = goal_not_met(self.world, goal, "plan finished but the success check fails")
             else:
                 action = queue.pop(0)
                 if action.type == ActionType.GIVE_UP:
@@ -96,21 +84,42 @@ class ReActAgent:
                     self.dash.text(step, "give_up", action.rationale or plan.rationale)
                     break
                 if action.type == ActionType.DONE:
-                    failure = _goal_not_met(self.world, goal, "planner said done but the success check fails")
+                    failure = goal_not_met(self.world, goal, "planner said done but the success check fails")
                 else:
+                    chosen = None
                     if self.imagination is not None:
                         cands = self._candidates(action, alternatives)
                         if len(cands) > 1:
-                            action, imagined = self.imagination.choose(cands, goal, step)
+                            then = queue[0] if queue and queue[0].type == ActionType.PLACE_ON else None
+                            action, imagined = self.imagination.choose(cands, goal, step, then)
+                            chosen = next((i for i in imagined if i.action is action), None)
+                            if chosen is not None and chosen.then_trace is not None:
+                                pending_replay = (chosen.then, chosen.then_trace)
                             self.dash.imagined(step, imagined)
+                            rec.imagined.append({
+                                "step": step, "proposed": cands[0].short(), "chosen": action.short(),
+                                "candidates": [{"action": i.action.short(), "score": round(i.score, 2),
+                                                "failure": i.failure.type.value, "detail": i.failure.detail}
+                                               for i in imagined]})
                     alternatives = []
 
                     last_action = action.short()
-                    result = self.world.execute(action)
+                    replay = (chosen.trace if chosen is not None and chosen.trace is not None
+                              else pending_replay[1] if pending_replay and pending_replay[0] is action
+                              else None)
+                    if chosen is None and replay is None:
+                        pending_replay = None
+                    if replay is not None and hasattr(self.world, "replay"):
+                        result = self.world.replay(replay)   # do exactly what was imagined
+                    else:
+                        result = self.world.execute(action)
                     self.dash.text(step, "act", f"{action.short()} -> {result.message}")
 
                     for ev in self.chaos.events_for_step(step, list(state.objects)):
+                        if ev.object == "target":
+                            ev = dataclasses.replace(ev, object=goal.target)
                         self.world.perturb(ev)
+                        pending_replay = None   # the imagined follow-up no longer applies
                         rec.perturbations += 1
                         self.dash.text(step, "chaos", f"{ev.source}: {ev.kind} {ev.object or ''}")
 
@@ -151,6 +160,7 @@ class ReActAgent:
                     self.dash.text(step, "planner", f"no valid recovery: {e}")
                     break
                 queue = list(plan.actions)
+                pending_replay = None
                 self.dash.text(step, "replan", f"{[a.short() for a in queue]} — {plan.rationale}")
 
         return self._finish(rec, t_start)

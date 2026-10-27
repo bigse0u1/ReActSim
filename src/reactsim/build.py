@@ -26,7 +26,16 @@ def build_world(cfg: dict, out_dir: str | None = None):
     from reactsim.worlds.maniskill import ManiSkillWorld
     m = cfg["maniskill"]
     return ManiSkillWorld(m["env_id"], m["render_mode"], m["sim_backend"],
-                          record_dir=out_dir if m.get("record_video") else None)
+                          record_dir=out_dir if m.get("record_video") else None,
+                          scene=m.get("scene", "kitchen"))
+
+
+def default_instruction(cfg: dict) -> str:
+    if cfg["world"] == "fake":
+        return "Put the banana on the plate"
+    from reactsim.envs.tabletop import SCENES
+    target = next(iter(SCENES[cfg["maniskill"].get("scene", "kitchen")]))
+    return f"Put the {target} on the plate"
 
 
 def build_planner(cfg: dict, offline: bool = False):

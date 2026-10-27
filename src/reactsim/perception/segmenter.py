@@ -113,13 +113,30 @@ def _output_text(data: dict) -> str:
 
 def parse_sam_masks(text: str, frame_hw: tuple[int, int]) -> list[tuple[np.ndarray, float]]:
     """SAM output text -> [(full-frame bool mask, confidence)] for one image."""
-    from meta_sam_parser import CompletedOutcome, decode_mask_to_raster, image_segmentation_format
+    from meta_sam_parser import image_segmentation_format
 
-    parser = image_segmentation_format().create_parser()
+    return [(m, c) for _, _, m, c in _decode(image_segmentation_format(), text, frame_hw)]
+
+
+def parse_sam_video(text: str, frame_hw: tuple[int, int]) -> dict[int, list[tuple[str, np.ndarray, float]]]:
+    """SAM video output text -> {frame index: [(object id, full-frame bool mask, confidence)]}."""
+    from meta_sam_parser import video_segmentation_format
+
+    out: dict[int, list] = {}
+    for frame, obj, mask, conf in _decode(video_segmentation_format(), text, frame_hw):
+        out.setdefault(frame, []).append((obj, mask, conf))
+    return out
+
+
+def _decode(fmt, text: str, frame_hw: tuple[int, int]):
+    """Yield (frame index or None, object id, full-frame bool mask, confidence) per mask record.
+    SAM masks are box-local and may be coarser than their box."""
+    from meta_sam_parser import CompletedOutcome, decode_mask_to_raster
+
+    parser = fmt.create_parser()
     parser.push(text + "\n", emit=False)
     result = parser.finish(CompletedOutcome()).result
     H, W = frame_hw
-    out = []
     for rec in result.records:
         if rec.kind != "mask":
             continue
@@ -128,7 +145,7 @@ def parse_sam_masks(text: str, frame_hw: tuple[int, int]) -> list[tuple[np.ndarr
         b = rec.bounds
         top, left = int(round(b.top)), int(round(b.left))
         bh, bw = int(round(b.bottom)) - top, int(round(b.right)) - left
-        if (bh, bw) != local.shape and bh > 0 and bw > 0:   # mask raster may be coarser than its box
+        if (bh, bw) != local.shape and bh > 0 and bw > 0:
             rows = (np.arange(bh) * local.shape[0] / bh).astype(int)
             cols = (np.arange(bw) * local.shape[1] / bw).astype(int)
             local = local[rows][:, cols]
@@ -136,5 +153,5 @@ def parse_sam_masks(text: str, frame_hw: tuple[int, int]) -> list[tuple[np.ndarr
         r0, c0 = max(top, 0), max(left, 0)
         r1, c1 = min(top + local.shape[0], H), min(left + local.shape[1], W)
         full[r0:r1, c0:c1] = local[r0 - top:r1 - top, c0 - left:c1 - left].astype(bool)
-        out.append((full, rec.confidence if rec.confidence is not None else 1.0))
-    return out
+        frame = rec.frame.frame_index if rec.frame is not None else None
+        yield frame, rec.object_id, full, rec.confidence if rec.confidence is not None else 1.0
