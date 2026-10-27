@@ -11,11 +11,12 @@ from reactsim.evaluation.metrics import EpisodeRecord
 from reactsim.imagination.rollout import Imagination
 from reactsim.perception.grounding import Perception
 from reactsim.planning.schema import PlanValidationError
-from reactsim.types import GRASP_MODES, Action, ActionType
+from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType
 from reactsim.viz.dashboard import Dashboard
 
 
 MAX_SAME_FAILURE = 3   # stop after the same failure follows the same action this many times
+MAX_NO_WORKING_GRASP = 2   # ... sooner when Imagination already showed nothing works
 
 
 class ReActAgent:
@@ -86,7 +87,7 @@ class ReActAgent:
                 if action.type == ActionType.DONE:
                     failure = goal_not_met(self.world, goal, "planner said done but the success check fails")
                 else:
-                    chosen = None
+                    chosen, imagined = None, []
                     if self.imagination is not None:
                         cands = self._candidates(action, alternatives)
                         if len(cands) > 1:
@@ -104,6 +105,24 @@ class ReActAgent:
                     alternatives = []
 
                     last_action = action.short()
+                    if imagined and all(i.failure.is_failure and i.failure.type != FailureType.OBJECT_MOVED
+                                        for i in imagined):
+                        # Every candidate fails in physics and none even moves the object, so
+                        # executing one would fail the same way and change nothing. Report it.
+                        # (A candidate that moves the object is still tried: it can nudge the
+                        # object somewhere graspable.)
+                        tried = rec.imagined[-1]["candidates"]
+                        failure = FailureReport(
+                            FailureType.NO_WORKING_GRASP,
+                            f"no grasp works on {action.target} where it is now: imagined "
+                            + "; ".join(f"{c['action']} -> {c['detail'] or c['failure']}" for c in tried),
+                            {"imagined": tried})
+                        rec.steps.append({"step": step, "action": f"imagine {action.short()}", "ok": False,
+                                          "failure": failure.type.value, "detail": failure.detail})
+                        last_action = f"imagine {action.target}"
+                    else:
+                        failure = None
+                if failure is None and action.type not in (ActionType.DONE, ActionType.GIVE_UP):
                     replay = (chosen.trace if chosen is not None and chosen.trace is not None
                               else pending_replay[1] if pending_replay and pending_replay[0] is action
                               else None)
@@ -144,7 +163,8 @@ class ReActAgent:
                     failure.detail += (f" [same failure after {last_action} {repeats[key]} times:"
                                        " the previous recovery did not work, change strategy]")
                 self.dash.text(step, "failure", f"{failure.type.value}: {failure.detail}")
-                if repeats[key] >= MAX_SAME_FAILURE:
+                limit = MAX_NO_WORKING_GRASP if failure.type == FailureType.NO_WORKING_GRASP else MAX_SAME_FAILURE
+                if repeats[key] >= limit:
                     rec.stop_reason = f"gave up: {failure.type.value} repeated {repeats[key]} times"
                     self.dash.text(step, "give_up", rec.stop_reason)
                     break

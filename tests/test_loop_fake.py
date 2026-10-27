@@ -65,3 +65,49 @@ def test_goal_not_met_is_explained_and_repeats_stop():
     assert rec.stop_reason.startswith("gave up: goal_not_met")
     assert str(MAX_SAME_FAILURE) in rec.stop_reason
     assert rec.recovery_attempts == MAX_SAME_FAILURE - 1   # stopped instead of burning the replan budget
+
+
+def test_no_working_grasp_is_reported_not_attempted():
+    """If every imagined grasp fails (here: out of reach), the agent does not execute one;
+    it reports why, and stops after MAX_NO_WORKING_GRASP repeats."""
+    import numpy as np
+
+    from reactsim.agent import MAX_NO_WORKING_GRASP, ReActAgent
+    from reactsim.imagination.rollout import Imagination
+    from reactsim.perception.grounding import Perception
+    from reactsim.planning.mock import MockMuseClient
+    from reactsim.planning.planner import MusePlanner
+    from reactsim.types import ActionType
+    from reactsim.worlds.fake import FakeWorld
+
+    class FarWorld(FakeWorld):
+        executed = []
+
+        def reset(self, seed):
+            super().reset(seed)
+            self.state.objects["banana"].position = np.array([1.5, 0.0, 0.02])   # beyond reach
+
+        def execute(self, action):
+            if action.type == ActionType.PICK and not getattr(self, "_imagining", False):
+                FarWorld.executed.append(action.short())
+            return super().execute(action)
+
+    world = FarWorld()
+    perception = Perception(None)
+    imagination = Imagination(world, perception, max_candidates=3)
+    orig = imagination.evaluate
+
+    def evaluate(*a, **k):
+        world._imagining = True
+        try:
+            return orig(*a, **k)
+        finally:
+            world._imagining = False
+    imagination.evaluate = evaluate
+    agent = ReActAgent(world, perception, MusePlanner(MockMuseClient()), imagination=imagination,
+                       max_steps=30, max_replans=10)
+    rec = agent.run("Put the banana on the plate", seed=0)
+    assert not rec.success
+    assert rec.stop_reason == f"gave up: no_working_grasp repeated {MAX_NO_WORKING_GRASP} times"
+    assert FarWorld.executed == []                     # never tried a pick it knew would fail
+    assert "no grasp works on banana" in rec.steps[0]["detail"]

@@ -113,6 +113,7 @@ class FailureType(str, Enum):
     TARGET_LOST = "target_lost"
     CONTROLLER_ERROR = "controller_error"
     GOAL_NOT_MET = "goal_not_met"      # every step "worked" but the success check still fails
+    NO_WORKING_GRASP = "no_working_grasp"   # Imagination: every candidate fails and none even moves the object
 
 
 @dataclass

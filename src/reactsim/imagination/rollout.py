@@ -86,5 +86,7 @@ class Imagination:
         # The planner's proposal stands if physics says it works; it is only overruled when it fails.
         if imagined[0].result.ok and not imagined[0].failure.is_failure:
             return imagined[0].action, imagined
-        best = max(imagined, key=lambda i: i.score)
+        # When nothing works, prefer a candidate that at least moved the object (a nudge can
+        # leave it somewhere graspable) over one that changes nothing.
+        best = max(imagined, key=lambda i: (i.score, i.failure.type == FailureType.OBJECT_MOVED))
         return best.action, imagined

@@ -18,6 +18,9 @@ re-observing, clearing an obstacle), not a blind repeat.
 A goal_not_met report lists each success condition the physics check measured; read
 the values before deciding the task was not done. If a failure is marked as repeated,
 the last recovery did not work: do something different, or give_up and say why.
+A "no_working_grasp" report means Imagination already tried every grasp in physics: none held
+the object and none even moved it. Retrying a grasp will not help unless something changes
+(e.g. push an obstacle aside); otherwise give_up and explain why.
 
 {ACTION_SPEC}"""
 

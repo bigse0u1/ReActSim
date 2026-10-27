@@ -169,7 +169,30 @@ Metrics: `task_success_rate`, `recovery_success_rate`, `mean_recovery_attempts`,
 Every episode is logged to `outputs/*/episodes.jsonl`.
 
 <!-- RESULTS: fill only from real ManiSkill runs. FakeWorld numbers are not results. -->
-*Results: to be filled in from ManiSkill runs.*
+**Benchmark** (ManiSkill, kitchen scene, Panda, "put the banana on the plate", oracle segmentation, real Muse Spark `muse-spark-1.3`). The disturbance hits right after the first pick.
+
+Main comparison, seeds 0-19 (`outputs/bench_v2` for the rule baseline, `outputs/bench_v3` for ours):
+
+| Condition | B: rule-based retry | **Muse Spark + Imagination** |
+|---|---|---|
+| knock (chaos ball) | 17/20 | **19/20** |
+| drop (gripper forced open) | 12/20 | **20/20** |
+| mean recoveries (knock / drop) | 1.4 / 2.5 | 1.4 / **1.1** |
+
+All four systems, seeds 0-9 (`outputs/bench_main`, before the change described below):
+
+| Condition | A: fixed script | B: rule-based retry | Muse Spark, no Imagination | Muse Spark + Imagination |
+|---|---|---|---|---|
+| normal | 10/10 | 10/10 | 10/10 | 10/10 |
+| knock | 3/10 | 10/10 | 9/10 | 9/10 |
+| drop | 0/10 | 8/10 | 8/10 | 10/10 |
+| mean Muse calls (knock / drop) | - | - | 2.9 / 3.9 | **1.9 / 2.1** |
+
+What this shows, and what it does not:
+- A fixed script fails whenever the world changes; every closed-loop system recovers most of the time.
+- Against Muse alone, Imagination needs about half the recovery attempts and Muse calls: grasps are tried in physics first, not on the robot.
+- With 10 seeds the rule baseline looked best under *knock* (10/10 vs 9/10); with 20 it is 17/20 vs 19/20. Small samples mislead in both directions; the clear gap is *drop* (12/20 vs 20/20).
+- **No working grasp is reported, not attempted.** The 10-seed run showed the agent executing grasps that Imagination had already shown would fail, until the replan budget ran out. Now, when every imagined grasp fails and none even moves the object, the agent tells Muse Spark instead of trying (a grasp that moves the object is still tried: a nudge can leave it graspable). In two of the 40 episodes this fired, and both times Muse Spark changed strategy, pushed the can aside, and succeeded; one of them (knock, seed 7) had failed in both earlier runs.
 
 Measured so far (ManiSkill, 4 seeds each, pick and place on the plate; too few seeds to report as rates):
 
