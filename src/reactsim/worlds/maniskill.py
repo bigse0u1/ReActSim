@@ -7,7 +7,7 @@ import numpy as np
 
 import reactsim.envs.tabletop  # noqa: F401  (registers ReActTabletop-v1)
 from reactsim.control.skills import PandaSkills
-from reactsim.envs.tabletop import OBJECTS, PLATE_RADIUS, PLATE_TOP
+from reactsim.envs.tabletop import CHAOS_HAND_HALF, CHAOS_HAND_PARK, OBJECTS, PLATE_RADIUS, PLATE_TOP
 from reactsim.types import (
     Action,
     ActionType,
@@ -19,6 +19,7 @@ from reactsim.types import (
 )
 
 PLACE_CLEARANCE = 0.02   # release the held object this far above the plate
+KNOCK_SPEED = 0.006      # chaos hand travel per sim step (m)
 
 
 def _np(x):
@@ -124,14 +125,42 @@ class ManiSkillWorld:
             return
         if self._holding() == event.object:
             self.skills.planner.open_gripper()   # a knock frees a held object
-        p = _np(actor.pose.p[0])
-        q = _np(actor.pose.q[0])
-        actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy, OBJECTS[event.object].half_height], q=q))
+            self._hold(30)                       # let it fall to the table
         if event.kind == "knock":
-            # TODO: replace the teleport with an impulse for a more physical look
-            actor.set_linear_velocity(np.array([[event.dx * 2, event.dy * 2, 0.0]]))
-        for _ in range(20):   # let it settle
+            self._sweep_chaos_hand(actor, np.array([event.dx, event.dy]))
+        else:  # teleport: someone moved it while nobody was looking
+            p, q = _np(actor.pose.p[0]), _np(actor.pose.q[0])
+            actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy,
+                                          OBJECTS[event.object].half_height], q=q))
+        self._hold(20)   # let it settle
+
+    def _hold(self, steps: int) -> None:
+        for _ in range(steps):
             self.env.step(_np(self.u.agent.robot.get_qpos()[:, :8]))
+
+    def _sweep_chaos_hand(self, actor, push_xy: np.ndarray) -> None:
+        """Drive the kinematic chaos hand through the object along push_xy.
+
+        It starts just behind the object and travels |push_xy| past it, so the
+        knock is a real contact and the object's final pose comes from physics.
+        """
+        import sapien
+        hand = self.u.chaos_hand
+        # set_pose teleports (no contact impulse); a kinematic target makes PhysX move it
+        # with velocity, so it actually pushes what it hits.
+        body = hand._objs[0].find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+        d = push_xy / (np.linalg.norm(push_xy) + 1e-9)
+        p = _np(actor.pose.p[0])
+        z = CHAOS_HAND_HALF[2] + 0.003                # bottom just above the table
+        start = p[:2] - d * 0.10
+        end = p[:2] + push_xy
+        n = int(np.linalg.norm(end - start) / KNOCK_SPEED) + 1
+        hand.set_pose(sapien.Pose(p=[start[0], start[1], z]))
+        for t in np.linspace(0.0, 1.0, n):
+            xy = start + (end - start) * t
+            body.set_kinematic_target(sapien.Pose(p=[xy[0], xy[1], z]))
+            self._hold(1)
+        hand.set_pose(sapien.Pose(p=list(CHAOS_HAND_PARK)))
 
     def is_goal_satisfied(self, goal: Goal) -> bool:
         objs = self.u.objects

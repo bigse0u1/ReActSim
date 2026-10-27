@@ -51,10 +51,7 @@ class ReActAgent:
         self._calls_before = len(self._llm_calls())
         self.world.reset(seed)
         step = 0
-        obs = self.world.observe()
-        state = self.perception.perceive(obs, step)
-        self.dash.observation(step, obs, self.perception.last_masks)
-        self.dash.objects(step, state)
+        state = self._look(step)
 
         try:
             plan, alternatives = self.planner.plan(instruction, state, rec.steps)
@@ -106,6 +103,8 @@ class ReActAgent:
                                       "failure": failure.type.value, "detail": failure.detail})
                     state = after
                     step += 1
+                    if action.type == ActionType.REOBSERVE:
+                        state = self._look(step)
 
             if failure is not None and failure.is_failure:
                 rec.initial_failure = True
@@ -114,6 +113,7 @@ class ReActAgent:
                     break
                 replans += 1
                 rec.recovery_attempts = replans
+                state = self._look(step)   # look again before deciding how to recover
                 try:
                     plan, alternatives = self.planner.replan(instruction, goal, state, rec.steps, failure)
                 except PlanValidationError as e:
@@ -123,6 +123,21 @@ class ReActAgent:
                 self.dash.text(step, "replan", f"{[a.short() for a in queue]} — {plan.rationale}")
 
         return self._finish(rec, t_start)
+
+    def _look(self, step: int):
+        """Perceive with the segmenter (SAM 3.1) and log what was seen."""
+        obs = self.world.observe()
+        state = self.perception.perceive(obs, step, look=True)
+        self.dash.observation(step, obs, self.perception.last_masks)
+        self.dash.objects(step, state)
+        if self.perception.last_masks or self.perception.last_errors:
+            seen = ", ".join(
+                f"{o.name}" + (f" ({self.perception.last_errors[o.name] * 100:.1f} cm off)"
+                               if o.name in self.perception.last_errors else "")
+                for o in state.objects.values() if o.confidence > 0)
+            unseen = [o.name for o in state.objects.values() if o.confidence == 0]
+            self.dash.text(step, "see", seen + (f" | not found: {', '.join(unseen)}" if unseen else ""))
+        return state
 
     def _llm_calls(self) -> list:
         return getattr(getattr(self.planner, "client", None), "calls", [])

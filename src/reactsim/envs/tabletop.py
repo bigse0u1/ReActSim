@@ -15,6 +15,7 @@ from mani_skill.agents.robots import Panda
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
+from mani_skill.utils.building import actors
 from mani_skill.utils.building.actors.common import get_actor_builder
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
@@ -40,6 +41,9 @@ OBJECTS = {
     "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
     "plate": ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147),
 }
+# Chaos hand: a kinematic stick that physically knocks objects (instead of teleporting them).
+CHAOS_HAND_HALF = (0.02, 0.02, 0.06)
+CHAOS_HAND_PARK = (0.0, 0.0, -0.4)   # hidden under the table
 PLATE_RADIUS = 0.13
 PLATE_TOP = 2 * OBJECTS["plate"].half_height
 XY_JITTER = 0.03
@@ -78,6 +82,11 @@ class ReActTabletopEnv(BaseEnv):
             # The plate is fixed so a dropped object cannot shove it away.
             self.objects[name] = (builder.build_kinematic(name=name) if name == "plate"
                                   else builder.build(name=name))
+        # Kept out of self.objects so perception and planning never see it.
+        self.chaos_hand = actors.build_box(
+            self.scene, half_sizes=list(CHAOS_HAND_HALF), color=[1.0, 0.3, 0.0, 1.0],
+            name="chaos_hand", body_type="kinematic", initial_pose=sapien.Pose(p=CHAOS_HAND_PARK),
+        )
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):

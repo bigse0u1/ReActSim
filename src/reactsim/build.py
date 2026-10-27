@@ -53,7 +53,7 @@ def build_perception(cfg: dict, world) -> Perception:
         world.reset(cfg["seed"])
         return Perception(OracleSegmenter(world.segmentation_ids(), world.sam_aliases()))
     from reactsim.perception.segmenter import Sam3Segmenter
-    return Perception(Sam3Segmenter(cfg["perception"]["sam_model"]))
+    return Perception(Sam3Segmenter(cfg["perception"]["sam_model"]), look_every_step=False)
 
 
 def build_agent(cfg: dict, offline: bool = False, out_dir: str | None = None) -> ReActAgent:

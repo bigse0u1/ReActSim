@@ -156,7 +156,8 @@ SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation:
 - [x] mplib skills: pick (`top` / `angled` / `side`) and place
 - [x] Muse Spark planning and replanning in the loop (first full run succeeded)
 - [x] SAM 3.1 segmentation via the Model API (checked against ground truth)
-- [ ] SAM 3.1 inside the agent loop (the loop still uses the simulator's segmentation)
+- [x] SAM 3.1 inside the agent loop (`--segmenter sam3`): looks at the start, after each failure and on `reobserve`; positions from depth are 0.6–4.2 cm from ground truth
+- [ ] Grasp from perceived positions (planning uses SAM + depth; the pick skill still targets the simulator's object pose)
 - [ ] Mug grasps (the gripper aims at the hollow centre; needs rim or handle grasps)
 - [ ] *Show, don't tell*: learn the task from a phone video of a human hand (SAM 3.1 video tracking + Muse Spark)
 - [ ] rerun dashboard with the imagined-outcomes view

@@ -23,6 +23,7 @@ def main():
     ap.add_argument("--instruction", default="Put the banana on the plate")
     ap.add_argument("--world", choices=["fake", "maniskill"])
     ap.add_argument("--planner", choices=["muse", "rule", "fixed"])
+    ap.add_argument("--segmenter", choices=["oracle", "sam3"])
     ap.add_argument("--seed", type=int)
     ap.add_argument("--offline", action="store_true", help="use the mock Muse client (no API calls)")
     ap.add_argument("--chaos-stdin", action="store_true", help="read live perturbations from stdin")
@@ -38,6 +39,8 @@ def main():
         cfg["world"] = args.world
     if args.planner:
         cfg["planning"]["planner"] = args.planner
+    if args.segmenter:
+        cfg["perception"]["segmenter"] = args.segmenter
     seed = cfg["seed"] if args.seed is None else args.seed
 
     out = Path("outputs") / time.strftime("demo_%Y%m%d_%H%M%S")

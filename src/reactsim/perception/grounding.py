@@ -40,16 +40,20 @@ class Perception:
     estimate records its source and the error vs GT so the gap can be reported.
     """
 
-    def __init__(self, segmenter: Segmenter | None = None, use_depth: bool = True):
+    def __init__(self, segmenter: Segmenter | None = None, use_depth: bool = True,
+                 look_every_step: bool = True):
         self.segmenter = segmenter
         self.use_depth = use_depth
+        # SAM 3.1 costs ~2 s per object, so the agent only "looks" at the start, after a
+        # failure and on reobserve; in between (and inside Imagination) state comes from the sim.
+        self.look_every_step = look_every_step
         self.last_errors: dict[str, float] = {}
         self.last_masks = {}
 
-    def perceive(self, obs: Observation, step: int) -> WorldState:
+    def perceive(self, obs: Observation, step: int, look: bool = False) -> WorldState:
         objects = copy.deepcopy(obs.gt_objects)
         self.last_errors, self.last_masks = {}, {}
-        if self.segmenter is None or obs.rgb is None:
+        if self.segmenter is None or obs.rgb is None or not (look or self.look_every_step):
             return WorldState(objects, obs.gripper_holding, step)
 
         if isinstance(self.segmenter, OracleSegmenter):
