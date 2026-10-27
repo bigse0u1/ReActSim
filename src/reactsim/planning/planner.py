@@ -15,6 +15,9 @@ planning, grasping and the success check are done by the system.
 When a failure report is given, explain the likely physical cause in the
 rationale and choose a recovery that addresses that cause (e.g. a different grasp,
 re-observing, clearing an obstacle), not a blind repeat.
+A goal_not_met report lists each success condition the physics check measured; read
+the values before deciding the task was not done. If a failure is marked as repeated,
+the last recovery did not work: do something different, or give_up and say why.
 
 {ACTION_SPEC}"""
 

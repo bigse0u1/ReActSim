@@ -30,7 +30,10 @@ class MockMuseClient:
         plate = next(n for n, o in objs.items() if o["kind"] == "plate")
         grasp = "top"
         rationale = f"Pick {target} and place it on {plate}."
-        if "failure: grasp_failed" in text:
+        if "change strategy" in text and "failure: grasp_failed" not in text:
+            grasp = GRASP_MODES[(text.count("same failure") + 1) % len(GRASP_MODES)]
+            rationale = f"The same recovery failed again; switching to a {grasp} grasp."
+        elif "failure: grasp_failed" in text:
             m = re.search(r'"grasp": "(\w+)"', user)
             failed = m.group(1) if m else "top"
             grasp = GRASP_MODES[(GRASP_MODES.index(failed) + 1) % len(GRASP_MODES)]

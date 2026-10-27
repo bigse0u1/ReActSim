@@ -41,11 +41,11 @@ OBJECTS = {
     "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
     "plate": ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147),
 }
-# Chaos hand: a stick that physically knocks objects, even out of the gripper. It is a
-# dynamic body with finite mass (no gravity), so hitting the robot cannot apply unbounded force.
-CHAOS_HAND_HALF = (0.02, 0.02, 0.06)
-CHAOS_HAND_MASS = 1.0                # kg; a banana is ~0.1 kg
-CHAOS_HAND_PARK = (3.0, 3.0, 0.5)    # behind both cameras
+# Chaos ball: a YCB baseball thrown at objects, even out of the gripper. It floats (no
+# gravity) out of view until thrown, then flies a real ballistic arc.
+CHAOS_BALL_ID = "055_baseball"
+CHAOS_BALL_RADIUS = 0.037
+CHAOS_BALL_PARK = (3.0, 3.0, 0.5)    # behind both cameras
 PLATE_RADIUS = 0.13
 PLATE_TOP = 2 * OBJECTS["plate"].half_height   # rim height; the plate is concave inside
 ON_PLATE_LIFT = 0.003   # an object on the plate sits at least this much higher than on the table
@@ -86,13 +86,11 @@ class ReActTabletopEnv(BaseEnv):
             self.objects[name] = (builder.build_kinematic(name=name) if name == "plate"
                                   else builder.build(name=name))
         # Kept out of self.objects so perception and planning never see it.
-        self.chaos_hand = actors.build_box(
-            self.scene, half_sizes=list(CHAOS_HAND_HALF), color=[1.0, 0.3, 0.0, 1.0],
-            name="chaos_hand", body_type="dynamic", initial_pose=sapien.Pose(p=CHAOS_HAND_PARK),
-        )
-        for body in self.chaos_hand._bodies:
+        builder = get_actor_builder(self.scene, id=f"ycb:{CHAOS_BALL_ID}")
+        builder.initial_pose = sapien.Pose(p=CHAOS_BALL_PARK)
+        self.chaos_ball = builder.build(name="chaos_ball")
+        for body in self.chaos_ball._bodies:
             body.disable_gravity = True
-            body.mass = CHAOS_HAND_MASS
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):

@@ -8,7 +8,7 @@ import numpy as np
 import reactsim.envs.tabletop  # noqa: F401  (registers ReActTabletop-v1)
 from reactsim.control.skills import PandaSkills
 from reactsim.envs.tabletop import (
-    CHAOS_HAND_HALF, CHAOS_HAND_PARK, OBJECTS, ON_PLATE_LIFT, PLATE_RADIUS, PLATE_TOP,
+    CHAOS_BALL_PARK, CHAOS_BALL_RADIUS, OBJECTS, ON_PLATE_LIFT, PLATE_RADIUS, PLATE_TOP,
 )
 from reactsim.types import (
     Action,
@@ -21,8 +21,11 @@ from reactsim.types import (
 )
 
 PLACE_CLEARANCE = 0.02   # release the held object this far above the plate
-KNOCK_SPEED = 1.0        # chaos hand speed (m/s); with 1 kg this frees a held banana in 4/4 seeds
-KNOCK_END_OFFSET = 0.07  # strike this far from an elongated object's centre, to twist it
+THROW_DISTANCE = 0.6     # the ball is launched this far from the target (m)
+THROW_RISE = 0.2         # ... and this much higher
+THROW_TIME = 0.10        # flight time (s) -> ~6 m/s; frees a held banana in 4/4 seeds. At ~4 m/s the
+                         # higher arc sometimes flings the banana off the table and the mug with it.
+KNOCK_END_OFFSET = 0.07  # aim this far from an elongated object's centre, to twist it
 
 
 def _np(x):
@@ -129,7 +132,7 @@ class ManiSkillWorld:
         if actor is None:
             return
         if event.kind == "knock":   # physics decides whether a held object comes loose
-            self._sweep_chaos_hand(actor, np.array([event.dx, event.dy]))
+            self._throw_ball(actor, np.array([event.dx, event.dy]))
         else:  # teleport: someone moved it while nobody was looking
             p, q = _np(actor.pose.p[0]), _np(actor.pose.q[0])
             actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy,
@@ -140,54 +143,71 @@ class ManiSkillWorld:
         for _ in range(steps):
             self.env.step(_np(self.u.agent.robot.get_qpos()[:, :8]))
 
-    def _sweep_chaos_hand(self, actor, push_xy: np.ndarray) -> None:
-        """Swing the chaos hand through the object (held or not) along push_xy.
+    def _throw_ball(self, actor, push_xy: np.ndarray) -> None:
+        """Throw the chaos baseball at the object (held or not), travelling along push_xy.
 
-        Elongated objects are struck near one end, perpendicular to their long
-        axis, so a held banana twists out of the fingers the way it would if
-        someone hit it. Whether it comes loose is up to the physics.
+        Elongated objects are hit near one end, perpendicular to their long axis,
+        so a held banana twists out of the fingers. The launch velocity is solved
+        so the ballistic arc passes through the aim point; whether the object comes
+        loose is up to the physics.
         """
         import sapien
-        hand = self.u.chaos_hand
-        body = hand._bodies[0]
+        ball = self.u.chaos_ball
         d = push_xy / (np.linalg.norm(push_xy) + 1e-9)
-        p = _np(actor.pose.p[0])
-        hit = p.copy()
-        spec = OBJECTS[self._name_of(actor)]
-        if spec.kind == "banana":
+        aim = _np(actor.pose.p[0]).copy()
+        if OBJECTS[self._name_of(actor)].kind == "banana":
             R = sapien.Pose(q=_np(actor.pose.q[0])).to_transformation_matrix()[:3, :3]
             long_axis = R[:, 1] * np.array([1.0, 1.0, 0.0])        # YCB banana is long along y
             if np.linalg.norm(long_axis) > 1e-3:
                 long_axis /= np.linalg.norm(long_axis)
-                hit[:2] += long_axis[:2] * KNOCK_END_OFFSET
+                aim[:2] += long_axis[:2] * KNOCK_END_OFFSET
                 perp = np.array([-long_axis[1], long_axis[0]])
                 d = perp if perp @ d >= 0 else -perp
-        z = max(hit[2], CHAOS_HAND_HALF[2] + 0.003)               # never scrape the table
-        start = hit[:2] - d * 0.12
-        travel = 0.12 + np.linalg.norm(push_xy)
-        hand.set_pose(sapien.Pose(p=[start[0], start[1], z]))
-        dt = self.u.control_timestep
-        for _ in range(int(travel / (KNOCK_SPEED * dt)) + 1):
-            hand.set_linear_velocity(np.array([[d[0] * KNOCK_SPEED, d[1] * KNOCK_SPEED, 0.0]]))
-            hand.set_angular_velocity(np.zeros((1, 3)))
-            self._hold(1)
-        hand.set_linear_velocity(np.zeros((1, 3)))
-        hand.set_pose(sapien.Pose(p=list(CHAOS_HAND_PARK)))
+        aim[2] = max(aim[2], CHAOS_BALL_RADIUS + 0.003)
+        start = aim - np.array([d[0], d[1], 0.0]) * THROW_DISTANCE + np.array([0.0, 0.0, THROW_RISE])
+        g = np.array([0.0, 0.0, -9.81])
+        v0 = (aim - start) / THROW_TIME - 0.5 * g * THROW_TIME
+        for body in ball._bodies:
+            body.disable_gravity = False
+        ball.set_pose(sapien.Pose(p=start))
+        ball.set_angular_velocity(np.zeros((1, 3)))
+        ball.set_linear_velocity(v0[None])
+        self._hold(int(THROW_TIME / self.u.control_timestep) + 15)   # flight + aftermath
+        self._park_ball()
+
+    def _park_ball(self) -> None:
+        import sapien
+        ball = self.u.chaos_ball
+        for body in ball._bodies:
+            body.disable_gravity = True
+        ball.set_linear_velocity(np.zeros((1, 3)))
+        ball.set_angular_velocity(np.zeros((1, 3)))
+        ball.set_pose(sapien.Pose(p=list(CHAOS_BALL_PARK)))
 
     def _name_of(self, actor) -> str:
         return next(n for n, a in self.u.objects.items() if a is actor)
 
     def is_goal_satisfied(self, goal: Goal) -> bool:
+        return all(c["ok"] for c in self.goal_report(goal).values())
+
+    def goal_report(self, goal: Goal) -> dict:
         objs = self.u.objects
         obj, ref = objs.get(goal.target), objs.get(goal.reference)
-        if obj is None or ref is None or self._holding() == goal.target:
-            return False
+        if obj is None or ref is None:
+            return {"objects_exist": {"ok": False, "value": [goal.target, goal.reference]}}
         po, pr = _np(obj.pose.p[0]), _np(ref.pose.p[0])
-        resting = np.linalg.norm(_np(obj.linear_velocity[0])) < 0.05
-        on_xy = np.linalg.norm(po[:2] - pr[:2]) < PLATE_RADIUS * 0.8
+        dist = float(np.linalg.norm(po[:2] - pr[:2]))
         # Not "above the rim": the plate is concave, so a banana lying in it sits below rim height.
-        lifted = po[2] > OBJECTS[goal.target].half_height + ON_PLATE_LIFT
-        return bool(on_xy and lifted and resting)
+        min_z = OBJECTS[goal.target].half_height + ON_PLATE_LIFT
+        speed = float(np.linalg.norm(_np(obj.linear_velocity[0])))
+        return {
+            "released": {"ok": self._holding() != goal.target, "value": self._holding()},
+            "over_reference": {"ok": dist < PLATE_RADIUS * 0.8, "value_cm": round(dist * 100, 1),
+                               "need_below_cm": round(PLATE_RADIUS * 80, 1)},
+            "above_table": {"ok": float(po[2]) > min_z, "value_cm": round(float(po[2]) * 100, 1),
+                            "need_above_cm": round(min_z * 100, 1)},
+            "at_rest": {"ok": speed < 0.05, "value_m_s": round(speed, 3)},
+        }
 
     def snapshot(self):
         return self.u.get_state_dict()

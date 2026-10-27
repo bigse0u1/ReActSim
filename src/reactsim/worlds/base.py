@@ -20,6 +20,11 @@ class World(Protocol):
         """Physics-based success check. Never delegated to an LLM."""
         ...
 
+    def goal_report(self, goal: Goal) -> dict[str, Any]:
+        """Each success condition with its measured value and whether it holds, so a
+        failed check can be explained to the planner instead of just retried."""
+        ...
+
     # Imagination needs to fork physics and come back.
     def snapshot(self) -> Any: ...
 

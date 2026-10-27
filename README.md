@@ -24,10 +24,10 @@ Built for the **Meta Global AI Developer Hackathon**, *Push the Frontier* track.
 Before committing to a risky skill (for example choosing between a `top`, `angled` or `side` grasp), the agent snapshots the simulator state (`get_state_dict`). It runs each candidate forward and scores the result with the same diagnoser used at runtime. Then it restores the state and runs only the best option. This is actual simulation of the future, not a heuristic feasibility score. The dashboard shows the imagined outcomes side by side.
 
 ### 😈 Chaos Mode: the world fights back
-Anyone can type during a run: *"knock the banana off"*, *"make it drop it"*. Muse Spark turns the text into a bounded physical perturbation. The robot is not told that anything happened; it has to notice from perception and physics. Scripted chaos makes the benchmarks reproducible.
+Anyone can type during a run: *"knock the banana off"*, *"make it drop it"*. Muse Spark turns the text into a bounded physical perturbation. A knock is a real projectile: a YCB baseball is thrown on a ballistic arc at the end of the banana, even while the robot is holding it, and the physics decides whether it twists out of the gripper (at ~6 m/s it did in 4/4 seeds). The robot is not told that anything happened; it has to notice from perception and physics. Scripted chaos makes the benchmarks reproducible.
 
 ### 🔍 Failure diagnosis it can explain
-Each skill states what should happen. The diagnoser compares that expectation with the observed state and produces a typed `FailureReport` with evidence. Muse Spark receives the report and must address the cause, not blindly repeat the action.
+Each skill states what should happen. The diagnoser compares that expectation with the observed state and produces a typed `FailureReport` with evidence. Muse Spark receives the report and must address the cause, not blindly repeat the action. When every step "worked" but the success check still fails, the report lists each physics condition with its measured value (e.g. `over_reference (value_cm=20.0)`), and a failure that repeats after the same action is flagged so the planner changes strategy; on the third repeat the agent stops and says why instead of looping.
 
 ### 🤝 The LLM proposes, physics disposes
 Excerpt from a real run (Muse Spark `muse-spark-1.3`, ManiSkill, seed 0). The banana was knocked out of the gripper by Chaos Mode:

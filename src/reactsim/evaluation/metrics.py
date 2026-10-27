@@ -21,6 +21,7 @@ class EpisodeRecord:
     llm_latency_s: float = 0.0
     invalid_llm_outputs: int = 0
     wall_time_s: float = 0.0
+    stop_reason: str = ""
     steps: list[dict] = field(default_factory=list)
 
 

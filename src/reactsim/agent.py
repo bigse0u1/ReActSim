@@ -15,6 +15,22 @@ from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, Failu
 from reactsim.viz.dashboard import Dashboard
 
 
+MAX_SAME_FAILURE = 3   # stop after the same failure follows the same action this many times
+
+
+def _goal_not_met(world, goal, why: str) -> FailureReport:
+    """Explain which success condition failed, with the measured values."""
+    report = world.goal_report(goal)
+    unmet = {k: v for k, v in report.items() if not v["ok"]}
+    parts = []
+    for name, c in unmet.items():
+        vals = ", ".join(f"{k}={v}" for k, v in c.items() if k != "ok")
+        parts.append(f"{name} ({vals})" if vals else name)
+    return FailureReport(FailureType.GOAL_NOT_MET,
+                         f"{why}; unmet: {'; '.join(parts) or 'none'}",
+                         {"success_check": report})
+
+
 class ReActAgent:
     def __init__(self, world, perception: Perception, planner, *,
                  imagination: Imagination | None = None, chaos: Chaos | None = None,
@@ -62,6 +78,8 @@ class ReActAgent:
         self.dash.text(step, "plan", f"{[a.short() for a in queue]} — {plan.rationale}")
 
         replans = 0
+        repeats: dict[tuple, int] = {}
+        last_action = None
         while step < self.max_steps:
             if self.world.is_goal_satisfied(goal):
                 rec.success = True
@@ -70,14 +88,15 @@ class ReActAgent:
 
             failure = None
             if not queue:
-                failure = FailureReport(FailureType.PLACE_MISSED, "plan finished but goal not satisfied")
+                failure = _goal_not_met(self.world, goal, "plan finished but the success check fails")
             else:
                 action = queue.pop(0)
                 if action.type == ActionType.GIVE_UP:
+                    rec.stop_reason = f"planner gave up: {action.rationale or plan.rationale}"
                     self.dash.text(step, "give_up", action.rationale or plan.rationale)
                     break
                 if action.type == ActionType.DONE:
-                    failure = FailureReport(FailureType.PLACE_MISSED, "planner said done but goal not satisfied")
+                    failure = _goal_not_met(self.world, goal, "planner said done but the success check fails")
                 else:
                     if self.imagination is not None:
                         cands = self._candidates(action, alternatives)
@@ -86,6 +105,7 @@ class ReActAgent:
                             self.dash.imagined(step, imagined)
                     alternatives = []
 
+                    last_action = action.short()
                     result = self.world.execute(action)
                     self.dash.text(step, "act", f"{action.short()} -> {result.message}")
 
@@ -108,8 +128,19 @@ class ReActAgent:
 
             if failure is not None and failure.is_failure:
                 rec.initial_failure = True
+                key = (failure.type, last_action)
+                repeats[key] = repeats.get(key, 0) + 1
+                if repeats[key] > 1:
+                    failure.evidence["repeat_count"] = repeats[key]
+                    failure.detail += (f" [same failure after {last_action} {repeats[key]} times:"
+                                       " the previous recovery did not work, change strategy]")
                 self.dash.text(step, "failure", f"{failure.type.value}: {failure.detail}")
+                if repeats[key] >= MAX_SAME_FAILURE:
+                    rec.stop_reason = f"gave up: {failure.type.value} repeated {repeats[key]} times"
+                    self.dash.text(step, "give_up", rec.stop_reason)
+                    break
                 if replans >= self.max_replans:
+                    rec.stop_reason = "replan budget exhausted"
                     break
                 replans += 1
                 rec.recovery_attempts = replans

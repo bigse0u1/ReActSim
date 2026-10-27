@@ -112,6 +112,7 @@ class FailureType(str, Enum):
     PLACE_MISSED = "place_missed"
     TARGET_LOST = "target_lost"
     CONTROLLER_ERROR = "controller_error"
+    GOAL_NOT_MET = "goal_not_met"      # every step "worked" but the success check still fails
 
 
 @dataclass

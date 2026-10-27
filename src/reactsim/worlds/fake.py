@@ -108,12 +108,19 @@ class FakeWorld:
             obj.position = np.array([obj.position[0] + event.dx, obj.position[1] + event.dy, TABLE_Z])
 
     def is_goal_satisfied(self, goal: Goal) -> bool:
+        return all(c["ok"] for c in self.goal_report(goal).values())
+
+    def goal_report(self, goal: Goal) -> dict:
         s = self.state
         obj, ref = s.objects.get(goal.target), s.objects.get(goal.reference)
-        if obj is None or ref is None or s.holding == goal.target:
-            return False
+        if obj is None or ref is None:
+            return {"objects_exist": {"ok": False, "value": [goal.target, goal.reference]}}
         dxy = np.abs(obj.position[:2] - ref.position[:2])
-        return bool(np.all(dxy < PLATE_HALF) and obj.position[2] > ref.position[2])
+        return {
+            "released": {"ok": s.holding != goal.target, "value": s.holding},
+            "over_reference": {"ok": bool(np.all(dxy < PLATE_HALF)), "value_cm": (dxy * 100).round(1).tolist()},
+            "above_reference": {"ok": bool(obj.position[2] > ref.position[2])},
+        }
 
     def snapshot(self):
         return copy.deepcopy(self.state)
