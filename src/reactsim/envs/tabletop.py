@@ -41,11 +41,14 @@ OBJECTS = {
     "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
     "plate": ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147),
 }
-# Chaos hand: a kinematic stick that physically knocks objects (instead of teleporting them).
+# Chaos hand: a stick that physically knocks objects, even out of the gripper. It is a
+# dynamic body with finite mass (no gravity), so hitting the robot cannot apply unbounded force.
 CHAOS_HAND_HALF = (0.02, 0.02, 0.06)
-CHAOS_HAND_PARK = (0.0, 0.0, -0.4)   # hidden under the table
+CHAOS_HAND_MASS = 1.0                # kg; a banana is ~0.1 kg
+CHAOS_HAND_PARK = (3.0, 3.0, 0.5)    # behind both cameras
 PLATE_RADIUS = 0.13
-PLATE_TOP = 2 * OBJECTS["plate"].half_height
+PLATE_TOP = 2 * OBJECTS["plate"].half_height   # rim height; the plate is concave inside
+ON_PLATE_LIFT = 0.003   # an object on the plate sits at least this much higher than on the table
 XY_JITTER = 0.03
 
 
@@ -85,8 +88,11 @@ class ReActTabletopEnv(BaseEnv):
         # Kept out of self.objects so perception and planning never see it.
         self.chaos_hand = actors.build_box(
             self.scene, half_sizes=list(CHAOS_HAND_HALF), color=[1.0, 0.3, 0.0, 1.0],
-            name="chaos_hand", body_type="kinematic", initial_pose=sapien.Pose(p=CHAOS_HAND_PARK),
+            name="chaos_hand", body_type="dynamic", initial_pose=sapien.Pose(p=CHAOS_HAND_PARK),
         )
+        for body in self.chaos_hand._bodies:
+            body.disable_gravity = True
+            body.mass = CHAOS_HAND_MASS
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         with torch.device(self.device):
@@ -108,7 +114,7 @@ class ReActTabletopEnv(BaseEnv):
         obj = self.objects["banana"].pose.p
         plate = self.objects["plate"].pose.p
         on_xy = torch.linalg.norm(obj[:, :2] - plate[:, :2], dim=1) < PLATE_RADIUS * 0.8
-        above = obj[:, 2] > PLATE_TOP
+        above = obj[:, 2] > OBJECTS["banana"].half_height + ON_PLATE_LIFT
         grasped = self.agent.is_grasping(self.objects["banana"])
         return {"success": on_xy & above & ~grasped}
 

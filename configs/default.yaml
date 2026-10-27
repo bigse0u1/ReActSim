@@ -28,7 +28,7 @@ chaos:
   # Scripted events for reproducible benchmarks: {step: N, event: {...}}
   scripted:
     - step: 0
-      event: {kind: knock, object: banana, dx: -0.08, dy: 0.03}
+      event: {kind: knock, object: banana, dx: -0.08, dy: 0.0}
 
 viz:
   rerun: false

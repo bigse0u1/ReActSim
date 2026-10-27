@@ -7,7 +7,9 @@ import numpy as np
 
 import reactsim.envs.tabletop  # noqa: F401  (registers ReActTabletop-v1)
 from reactsim.control.skills import PandaSkills
-from reactsim.envs.tabletop import CHAOS_HAND_HALF, CHAOS_HAND_PARK, OBJECTS, PLATE_RADIUS, PLATE_TOP
+from reactsim.envs.tabletop import (
+    CHAOS_HAND_HALF, CHAOS_HAND_PARK, OBJECTS, ON_PLATE_LIFT, PLATE_RADIUS, PLATE_TOP,
+)
 from reactsim.types import (
     Action,
     ActionType,
@@ -19,7 +21,8 @@ from reactsim.types import (
 )
 
 PLACE_CLEARANCE = 0.02   # release the held object this far above the plate
-KNOCK_SPEED = 0.006      # chaos hand travel per sim step (m)
+KNOCK_SPEED = 1.0        # chaos hand speed (m/s); with 1 kg this frees a held banana in 4/4 seeds
+KNOCK_END_OFFSET = 0.07  # strike this far from an elongated object's centre, to twist it
 
 
 def _np(x):
@@ -100,6 +103,8 @@ class ManiSkillWorld:
         if t == ActionType.PLACE_ON:
             ref = _np(objs[action.reference].pose.p[0])
             held = self._holding()
+            if held is None:
+                return SkillResult(False, "nothing in gripper")
             # Keep the object's current hang below the gripper; lower until its bottom clears the plate.
             hang = 0.0
             if held is not None:
@@ -123,10 +128,7 @@ class ManiSkillWorld:
         actor = self.u.objects.get(event.object)
         if actor is None:
             return
-        if self._holding() == event.object:
-            self.skills.planner.open_gripper()   # a knock frees a held object
-            self._hold(30)                       # let it fall to the table
-        if event.kind == "knock":
+        if event.kind == "knock":   # physics decides whether a held object comes loose
             self._sweep_chaos_hand(actor, np.array([event.dx, event.dy]))
         else:  # teleport: someone moved it while nobody was looking
             p, q = _np(actor.pose.p[0]), _np(actor.pose.q[0])
@@ -139,28 +141,41 @@ class ManiSkillWorld:
             self.env.step(_np(self.u.agent.robot.get_qpos()[:, :8]))
 
     def _sweep_chaos_hand(self, actor, push_xy: np.ndarray) -> None:
-        """Drive the kinematic chaos hand through the object along push_xy.
+        """Swing the chaos hand through the object (held or not) along push_xy.
 
-        It starts just behind the object and travels |push_xy| past it, so the
-        knock is a real contact and the object's final pose comes from physics.
+        Elongated objects are struck near one end, perpendicular to their long
+        axis, so a held banana twists out of the fingers the way it would if
+        someone hit it. Whether it comes loose is up to the physics.
         """
         import sapien
         hand = self.u.chaos_hand
-        # set_pose teleports (no contact impulse); a kinematic target makes PhysX move it
-        # with velocity, so it actually pushes what it hits.
-        body = hand._objs[0].find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+        body = hand._bodies[0]
         d = push_xy / (np.linalg.norm(push_xy) + 1e-9)
         p = _np(actor.pose.p[0])
-        z = CHAOS_HAND_HALF[2] + 0.003                # bottom just above the table
-        start = p[:2] - d * 0.10
-        end = p[:2] + push_xy
-        n = int(np.linalg.norm(end - start) / KNOCK_SPEED) + 1
+        hit = p.copy()
+        spec = OBJECTS[self._name_of(actor)]
+        if spec.kind == "banana":
+            R = sapien.Pose(q=_np(actor.pose.q[0])).to_transformation_matrix()[:3, :3]
+            long_axis = R[:, 1] * np.array([1.0, 1.0, 0.0])        # YCB banana is long along y
+            if np.linalg.norm(long_axis) > 1e-3:
+                long_axis /= np.linalg.norm(long_axis)
+                hit[:2] += long_axis[:2] * KNOCK_END_OFFSET
+                perp = np.array([-long_axis[1], long_axis[0]])
+                d = perp if perp @ d >= 0 else -perp
+        z = max(hit[2], CHAOS_HAND_HALF[2] + 0.003)               # never scrape the table
+        start = hit[:2] - d * 0.12
+        travel = 0.12 + np.linalg.norm(push_xy)
         hand.set_pose(sapien.Pose(p=[start[0], start[1], z]))
-        for t in np.linspace(0.0, 1.0, n):
-            xy = start + (end - start) * t
-            body.set_kinematic_target(sapien.Pose(p=[xy[0], xy[1], z]))
+        dt = self.u.control_timestep
+        for _ in range(int(travel / (KNOCK_SPEED * dt)) + 1):
+            hand.set_linear_velocity(np.array([[d[0] * KNOCK_SPEED, d[1] * KNOCK_SPEED, 0.0]]))
+            hand.set_angular_velocity(np.zeros((1, 3)))
             self._hold(1)
+        hand.set_linear_velocity(np.zeros((1, 3)))
         hand.set_pose(sapien.Pose(p=list(CHAOS_HAND_PARK)))
+
+    def _name_of(self, actor) -> str:
+        return next(n for n, a in self.u.objects.items() if a is actor)
 
     def is_goal_satisfied(self, goal: Goal) -> bool:
         objs = self.u.objects
@@ -170,7 +185,9 @@ class ManiSkillWorld:
         po, pr = _np(obj.pose.p[0]), _np(ref.pose.p[0])
         resting = np.linalg.norm(_np(obj.linear_velocity[0])) < 0.05
         on_xy = np.linalg.norm(po[:2] - pr[:2]) < PLATE_RADIUS * 0.8
-        return bool(on_xy and po[2] > PLATE_TOP and resting)
+        # Not "above the rim": the plate is concave, so a banana lying in it sits below rim height.
+        lifted = po[2] > OBJECTS[goal.target].half_height + ON_PLATE_LIFT
+        return bool(on_xy and lifted and resting)
 
     def snapshot(self):
         return self.u.get_state_dict()
