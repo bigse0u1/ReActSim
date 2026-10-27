@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--planner", choices=["muse", "rule", "fixed"])
     ap.add_argument("--segmenter", choices=["oracle", "sam3"])
     ap.add_argument("--scene", choices=["kitchen", "home"])
+    ap.add_argument("--robot", choices=["panda", "hand"], help="panda (two fingers) or hand (xArm7 + five fingers)")
     ap.add_argument("--seed", type=int)
     ap.add_argument("--offline", action="store_true", help="use the mock Muse client (no API calls)")
     ap.add_argument("--chaos-stdin", action="store_true", help="read live perturbations from stdin")
@@ -44,6 +45,8 @@ def main():
         cfg["perception"]["segmenter"] = args.segmenter
     if args.scene:
         cfg["maniskill"]["scene"] = args.scene
+    if args.robot:
+        cfg["maniskill"]["robot"] = args.robot
     instruction = args.instruction or default_instruction(cfg)
     seed = cfg["seed"] if args.seed is None else args.seed
 

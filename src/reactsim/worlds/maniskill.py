@@ -6,6 +6,7 @@ import gymnasium as gym
 import numpy as np
 
 import reactsim.envs.tabletop  # noqa: F401  (registers ReActTabletop-v1)
+from reactsim.agents import xarm_ability
 from reactsim.control.skills import PandaSkills
 from reactsim.envs.tabletop import (
     CHAOS_BALL_PARK, CHAOS_BALL_RADIUS, ON_PLATE_LIFT, PLATE_RADIUS, PLATE_TOP,
@@ -50,10 +51,15 @@ def _np(x):
 
 class ManiSkillWorld:
     def __init__(self, env_id="ReActTabletop-v1", render_mode="rgb_array",
-                 sim_backend="cpu", record_dir: str | None = None, vis=False, scene="kitchen"):
+                 sim_backend="cpu", record_dir: str | None = None, vis=False, scene="kitchen",
+                 robot="panda"):
+        self.robot = robot
+        hand = robot == "hand"
         env = gym.make(
             env_id,
             scene=scene,
+            robot_uids=xarm_ability.UID if hand else "panda",
+            **({"sim_config": {"sim_freq": xarm_ability.HAND_SIM_FREQ, "control_freq": 20}} if hand else {}),
             obs_mode="rgb+depth+segmentation",
             control_mode="pd_joint_pos",   # required by the mplib motion planner
             render_mode=render_mode,
@@ -67,7 +73,7 @@ class ManiSkillWorld:
         self.env = env
         self._record = bool(record_dir)
         self.vis = vis
-        self.skills: PandaSkills | None = None
+        self.skills = None
         self._last_obs = None
         self._actions = _ActionLog(env)   # the planner steps through this
         self.last_trace = None            # (joint commands, result) of the last execute()
@@ -79,7 +85,11 @@ class ManiSkillWorld:
     def reset(self, seed: int) -> None:
         self._last_obs, _ = self.env.reset(seed=seed)
         if self.skills is None:
-            self.skills = PandaSkills(self._actions, vis=self.vis)
+            if self.robot == "hand":
+                from reactsim.control.hand_skills import HandSkills
+                self.skills = HandSkills(self._actions, vis=self.vis)
+            else:
+                self.skills = PandaSkills(self._actions, vis=self.vis)
         else:
             self.skills.reset_planner()
 
@@ -133,7 +143,7 @@ class ManiSkillWorld:
         for a in commands:
             self.env.step(a)
         if commands:
-            self.skills.planner.gripper_state = float(commands[-1][-1])
+            self.skills.after_replay(commands)
         return result
 
     def _execute(self, action: Action) -> SkillResult:
@@ -163,8 +173,7 @@ class ManiSkillWorld:
     def perturb(self, event: PerturbEvent) -> None:
         import sapien
         if event.kind == "drop":
-            s = self.skills
-            s.planner.open_gripper()
+            self.skills.release()
             return
         actor = self.u.objects.get(event.object)
         if actor is None:
@@ -178,8 +187,7 @@ class ManiSkillWorld:
         self._hold(20)   # let it settle
 
     def _hold(self, steps: int) -> None:
-        for _ in range(steps):
-            self.env.step(_np(self.u.agent.robot.get_qpos()[:, :8]))
+        self.skills.idle(steps)
 
     def _throw_ball(self, actor, push_xy: np.ndarray) -> None:
         """Throw the chaos baseball at the object (held or not), travelling along push_xy.
@@ -255,10 +263,17 @@ class ManiSkillWorld:
         return report
 
     def snapshot(self):
-        return self.u.get_state_dict()
+        # Controller targets are not part of the physics state, but delta-controlled joints
+        # (the hand's fingers) move relative to them: without them a replay diverges.
+        targets = {k: c._target_qpos.clone() for k, c in self.u.agent.controller.controllers.items()
+                   if getattr(c, "_target_qpos", None) is not None}
+        return self.u.get_state_dict(), targets
 
     def restore(self, snap) -> None:
-        self.u.set_state_dict(snap)
+        state, targets = snap
+        self.u.set_state_dict(state)
+        for k, t in targets.items():
+            self.u.agent.controller.controllers[k]._target_qpos = t.clone()
         self.skills.reset_planner()
 
     def set_recording(self, on: bool) -> None:

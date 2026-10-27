@@ -15,6 +15,8 @@ import numpy as np
 import sapien
 import torch
 from mani_skill.agents.robots import Panda
+
+from reactsim.agents import xarm_ability
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
@@ -65,11 +67,12 @@ PLATE_RADIUS = 0.13
 PLATE_TOP = 2 * PLATE.half_height   # rim height; the plate is concave inside
 ON_PLATE_LIFT = 0.003   # an object on the plate sits at least this much higher than on the table
 XY_JITTER = 0.03
+ROBOT_BASE_X = {"panda": -0.615, xarm_ability.UID: xarm_ability.BASE_X}
 
 
 @register_env("ReActTabletop-v1", max_episode_steps=2000)
 class ReActTabletopEnv(BaseEnv):
-    SUPPORTED_ROBOTS = ["panda"]
+    SUPPORTED_ROBOTS = ["panda", xarm_ability.UID]
     agent: Panda
 
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, scene="kitchen", **kwargs):
@@ -88,8 +91,12 @@ class ReActTabletopEnv(BaseEnv):
         pose = sapien_utils.look_at(eye=[0.7, 0.6, 0.6], target=[0.05, 0.0, 0.1])
         return CameraConfig("render_camera", pose, 1024, 1024, 1.0, 0.01, 100)
 
+    @property
+    def base_x(self) -> float:
+        return ROBOT_BASE_X[self.robot_uids]
+
     def _load_agent(self, options: dict):
-        super()._load_agent(options, sapien.Pose(p=[-0.615, 0, 0]))
+        super()._load_agent(options, sapien.Pose(p=[self.base_x, 0, 0]))
 
     def _load_scene(self, options: dict):
         self.table_scene = TableSceneBuilder(self, robot_init_qpos_noise=self.robot_init_qpos_noise)
@@ -112,6 +119,10 @@ class ReActTabletopEnv(BaseEnv):
         with torch.device(self.device):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
+            if self.robot_uids == xarm_ability.UID:   # the table builder only knows stock robots
+                rest = self.agent.keyframes["rest"].qpos[:7]
+                self.agent.reset(xarm_ability.hand_qpos(rest))
+                self.agent.robot.set_pose(sapien.Pose(p=[self.base_x, 0, 0]))
             for name, spec in self.specs.items():
                 if name == "plate":
                     continue

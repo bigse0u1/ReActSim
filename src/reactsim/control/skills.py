@@ -45,6 +45,18 @@ class PandaSkills:
             visualize_target_grasp_pose=self.vis, print_env_info=False,
         )
 
+    def release(self) -> None:
+        self.planner.open_gripper()
+
+    def idle(self, steps: int) -> None:
+        """Keep the current joint positions (and gripper) for `steps` control steps."""
+        for _ in range(steps):
+            self.raw_env.step(self.env.agent.robot.get_qpos()[0, :8].cpu().numpy())
+
+    def after_replay(self, commands) -> None:
+        """Commands were sent without the planner: sync its gripper state with the last one."""
+        self.planner.gripper_state = float(commands[-1][-1])
+
     def reset_planner(self):
         """Call after env.reset / set_state_dict so the planner sees the new robot state."""
         self.planner.close()

@@ -27,7 +27,7 @@ def build_world(cfg: dict, out_dir: str | None = None):
     m = cfg["maniskill"]
     return ManiSkillWorld(m["env_id"], m["render_mode"], m["sim_backend"],
                           record_dir=out_dir if m.get("record_video") else None,
-                          scene=m.get("scene", "kitchen"))
+                          scene=m.get("scene", "kitchen"), robot=m.get("robot", "panda"))
 
 
 def default_instruction(cfg: dict) -> str:

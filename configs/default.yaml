@@ -6,6 +6,7 @@ max_replans: 4
 maniskill:
   env_id: ReActTabletop-v1
   scene: kitchen           # kitchen (banana, mug, can) | home (orange, can, cup)
+  robot: panda             # panda (two-finger gripper) | hand (xArm7 + five-finger Ability hand)
   render_mode: rgb_array   # human for GUI
   sim_backend: cpu
   record_video: true

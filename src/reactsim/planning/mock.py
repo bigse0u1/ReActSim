@@ -24,8 +24,10 @@ class MockMuseClient:
         state = json.loads(re.search(r"state: (\{.*\})", user).group(1))
         objs = {o["name"]: o for o in state["objects"]}
         text = user.lower()
+        m = re.search(r"instruction: (.*)", text)
+        instruction = m.group(1) if m else text   # the state JSON names every object; match the instruction only
         target = next((n for n, o in objs.items()
-                       if o["kind"] != "plate" and (n.replace("_", " ") in text or o["kind"] in text)),
+                       if o["kind"] != "plate" and (n.replace("_", " ") in instruction or o["kind"] in instruction)),
                       next(n for n, o in objs.items() if o["kind"] != "plate"))
         plate = next(n for n, o in objs.items() if o["kind"] == "plate")
         grasp = "top"

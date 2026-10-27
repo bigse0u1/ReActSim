@@ -22,6 +22,8 @@ from reactsim.perception.video import SamVideoTracker, Track, downsample, read_f
 from reactsim.planning.schema import extract_json
 from reactsim.types import GRASP_MODES
 
+BODIES = {"panda": "a two-finger parallel gripper",
+          "hand": "a five-finger robot hand (xArm7 + Ability hand)"}
 SAMPLE_FPS = 8      # SAM bills per frame; 8 fps is plenty for a pick-and-place
 SAMPLE_WIDTH = 640
 
@@ -65,11 +67,11 @@ class Demonstration:
     def task(self) -> str:
         return f"The person picked up the {self.target} and put it on the {self.reference}."
 
-    def instruction(self) -> str:
+    def instruction(self, body: str = "a two-finger parallel gripper") -> str:
         return (f"Put the {self.robot_target} on the {self.robot_reference}. "
                 f"This task was shown in a human demonstration. {self.task} "
                 f"The human used {'an' if self.human_grasp[0] in 'aeiou' else 'a'} {self.human_grasp} grasp: {self.grasp_evidence} "
-                "The robot has a two-finger parallel gripper, not a hand; "
+                f"The robot has {body}, not a human hand; "
                 "use the human's grasp as a hint, not a rule.")
 
     def save(self, path: str | Path) -> None:

@@ -48,6 +48,13 @@ Measured on three real clips (home scene, seed 0, Muse Spark + SAM 3.1, all succ
 
 Each run writes `show_dont_tell.mp4`: the clip with SAM masks on the left, the robot on the right, and what was learned and imagined in between.
 
+### ✋ Same brain, two bodies
+`--robot panda` uses a Franka Panda with a two-finger gripper; `--robot hand` uses an xArm7 arm with a five-finger PSYONIC Ability hand (a commercially sold combination). The agent, the prompts, the diagnoser and Imagination are unchanged: only the skills differ, and Imagination finds out what each body can do. The hand grasps by opening all five fingers around the object from above, closing each finger until its pad touches (so the first finger braces instead of pushing), then squeezing.
+
+Pick and place on the plate with the hand (home scene, 3 seeds each, success check incl. standing upright): orange 3/3, can 3/3, cup 3/3, other objects moved by at most 0.2 cm. From the human videos, with Muse Spark: all three succeeded; the human's `side` and `angled` grasps were imagined and rejected for this hand (no feasible path / no angled grasp / the cup slid), and it used its five-finger `top` grasp.
+
+Getting the stock ManiSkill model to this point took several fixes, each found by measuring (details in `src/reactsim/agents/xarm_ability.py`): finger mimic joints blew up under arm motion (q2 now driven directly, 500 Hz physics); the thumb pad kept friction 0.3 because of a typo in the upstream config (`thumnb_L2`); mplib rejected every IK solution because finger hulls overlap; the planner spun joint 1 a full turn into the table; and delta-controlled fingers wound their targets up behind the object, so the hand never reopened.
+
 ### 🤝 The LLM proposes, physics disposes
 Excerpt from a real run (Muse Spark `muse-spark-1.3`, ManiSkill, seed 0). The banana was knocked out of the gripper by Chaos Mode:
 
@@ -102,13 +109,14 @@ Muse Spark's reasoning sounded right but its choice would have failed. Imaginati
 ```text
 src/reactsim/
   agent.py              ReAct loop
+  agents/               xArm7 + Ability hand model (patched for stable simulation and planning)
   types.py              shared dataclasses
   build.py              config → components
   envs/tabletop.py      ReActTabletop-v1: Panda + YCB banana, mug, soup can, plate
   worlds/               World interface; ManiSkill backend; FakeWorld (no-GPU test double)
   perception/           SAM 3.1 / oracle segmenter; mask+depth → 3D
   planning/             Muse Spark client, prompt, JSON schema + validator, baselines
-  control/skills.py     pick (top / angled / side) / place_on / push_aside on mplib
+  control/              Panda skills (top / angled / side) and five-finger hand skills (top / side)
   imagination/          fork-and-evaluate lookahead (pick + place), exact replay
   imitation/            Show, don't tell: video events + demonstration
   chaos/                scripted + natural-language perturbations
@@ -139,6 +147,8 @@ cp .env.example .env   # then put MODEL_API_KEY in .env (never in .env.example)
 python scripts/check_api.py                                    # one Muse call + SAM masks vs ground truth
 python scripts/run_demo.py --world maniskill --chaos-stdin    # sim + Muse Spark + live chaos
 python scripts/learn_from_video.py data/demos/can_side.mp4     # phone video -> robot (home scene)
+python scripts/learn_from_video.py data/demos/can_side.mp4 --robot hand   # ... with the five-finger hand
+python scripts/run_demo.py --world maniskill --scene home --robot hand --offline
 
 # Baseline comparison on identical seeds and perturbations
 python scripts/run_benchmark.py --world maniskill --seeds 20
@@ -183,6 +193,8 @@ SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation:
 - [ ] Mug grasps (the gripper aims at the hollow centre; needs rim or handle grasps)
 - [x] *Show, don't tell*: phone video of a human hand → SAM 3.1 video tracking + Muse Spark → robot, adapting the human's grasp through Imagination (3/3 clips)
 - [x] Imagination scores pick + place together and the real run replays the imagined joint commands
+- [x] Second body: xArm7 + five-finger Ability hand (`--robot hand`), same agent; pick and place 9/9, human videos 3/3
+- [ ] Hand: `side` grasp (plans fail or the object slides), Chaos ball tuned for round objects (it throws the orange 1.3 m)
 - [ ] rerun dashboard with the imagined-outcomes view
 - [ ] Benchmark on ManiSkill and the demo video
 

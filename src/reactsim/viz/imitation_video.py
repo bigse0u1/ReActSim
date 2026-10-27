@@ -71,7 +71,8 @@ def reason(c: dict) -> str:
 
 
 def compose(human_video: str | Path, robot_video: str | Path, demo, imagined: list[dict],
-            used_grasp: str, success: bool, out: str | Path, human_fps: float) -> Path:
+            used_grasp: str, success: bool, out: str | Path, human_fps: float,
+            body: str = "two-finger gripper") -> Path:
     """Phase 1: the human clip plays while SAM tracks it. Phase 2: the robot plays, with
     what was learned from the human and what Imagination found next to it."""
     human = _read(human_video)
@@ -109,7 +110,7 @@ def compose(human_video: str | Path, robot_video: str | Path, demo, imagined: li
         lines = learned + [("", white)] + imagine + [("", white)]
         if i > len(robot) // 3:
             lines += result
-        _text(c, [("2. ROBOT (two-finger gripper)", white)], left_w + 20, 40)
+        _text(c, [(f"2. ROBOT ({body})", white)], left_w + 20, 40)
         _text(c, lines, 20, 395, scale=0.55, gap=24)
         frames.append(c)
     frames += [frames[-1]] * FPS * 2
