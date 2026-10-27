@@ -29,14 +29,15 @@ class Segmenter(Protocol):
 class OracleSegmenter:
     """prompt ("banana") -> actor name ("banana") -> GT segmentation id."""
 
-    def __init__(self, seg_ids: dict[str, int]):
+    def __init__(self, seg_ids: dict[str, int], aliases: dict[str, str] | None = None):
         self.seg_ids = seg_ids
+        self.aliases = aliases or {}   # SAM prompt -> actor name, e.g. "cup" -> "mug"
         self.segmentation: np.ndarray | None = None   # set per frame by the perception module
 
     def segment(self, rgb, prompts):
         out = {}
         for p in prompts:
-            name = p.strip().lower().replace(" ", "_")
+            name = self.aliases.get(p, p.strip().lower().replace(" ", "_"))
             if name in self.seg_ids and self.segmentation is not None:
                 m = self.segmentation == self.seg_ids[name]
                 if m.any():
@@ -45,43 +46,95 @@ class OracleSegmenter:
 
 
 class Sam3Segmenter:
-    """SAM 3.1 via the Meta Model API.
+    """SAM 3.1 via the Meta Model API (POST /v1/responses, one noun phrase per request).
 
-    TODO(day 3): the request/response schema below is a placeholder. Check
-    https://dev.meta.ai/docs/models for the real SAM 3.1 endpoint, input format
-    (image + text concept prompt) and mask encoding (RLE vs PNG vs polygons).
+    The response is SAM's special-token text (box + mask records), decoded with
+    Meta's `meta-sam-parser`. See https://dev.meta.ai/docs/sam/segmenting.
     """
 
-    def __init__(self, model: str = "sam-3.1", base_url: str | None = None, timeout: float = 30.0):
+    def __init__(self, model: str = "sam-3.1", base_url: str | None = None, timeout: float = 60.0):
         import httpx
 
         self.model = model
         self.base_url = base_url or os.environ.get("META_API_BASE_URL", "https://api.meta.ai/v1")
         self.client = httpx.Client(timeout=timeout)
-        self.api_key = os.environ["MODEL_API_KEY"]
+        self.api_key = os.environ["MODEL_API_KEY"]   # never log this
+        self.calls: list[float] = []                 # latency per request
 
     @staticmethod
-    def _encode_png(rgb: np.ndarray) -> str:
+    def _data_url(rgb: np.ndarray) -> str:
         from PIL import Image
 
         buf = io.BytesIO()
         Image.fromarray(rgb).save(buf, format="PNG")
-        return base64.b64encode(buf.getvalue()).decode()
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    def _request(self, rgb: np.ndarray, prompt: str) -> str:
+        import time
+
+        t0 = time.time()
+        resp = self.client.post(
+            f"{self.base_url}/responses",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model,
+                "input": [{"role": "user", "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": self._data_url(rgb)},
+                ]}],
+                "metadata": {"include_confidence": "true"},
+            },
+        )
+        self.calls.append(time.time() - t0)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"SAM request failed ({resp.status_code}): {resp.text[:300]}")
+        return _output_text(resp.json())
 
     def segment(self, rgb, prompts):
-        resp = self.client.post(
-            f"{self.base_url}/segment",   # TODO: verify endpoint
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={"model": self.model, "image": self._encode_png(rgb), "prompts": prompts},
-        )
-        resp.raise_for_status()
         out = {}
-        for item in resp.json().get("results", []):   # TODO: verify response shape
-            m = _decode_mask(item["mask"], rgb.shape[:2])
-            out[item["prompt"]] = Mask(item["prompt"], m, float(item.get("score", 0.0)))
+        for p in prompts:
+            masks = parse_sam_masks(self._request(rgb, p), rgb.shape[:2])
+            if masks:
+                mask, score = max(masks, key=lambda m: (m[1], m[0].sum()))
+                out[p] = Mask(p, mask, score)
         return out
 
 
-def _decode_mask(data, shape) -> np.ndarray:
-    # TODO: implement for the actual encoding returned by the API.
-    raise NotImplementedError("SAM 3.1 mask decoding not wired up yet")
+def _output_text(data: dict) -> str:
+    if data.get("output_text"):
+        return data["output_text"]
+    parts = []
+    for item in data.get("output", []):
+        for c in item.get("content", []) or []:
+            if c.get("type") == "output_text":
+                parts.append(c.get("text", ""))
+    return "\n".join(parts)
+
+
+def parse_sam_masks(text: str, frame_hw: tuple[int, int]) -> list[tuple[np.ndarray, float]]:
+    """SAM output text -> [(full-frame bool mask, confidence)] for one image."""
+    from meta_sam_parser import CompletedOutcome, decode_mask_to_raster, image_segmentation_format
+
+    parser = image_segmentation_format().create_parser()
+    parser.push(text + "\n", emit=False)
+    result = parser.finish(CompletedOutcome()).result
+    H, W = frame_hw
+    out = []
+    for rec in result.records:
+        if rec.kind != "mask":
+            continue
+        m = rec.mask
+        local = np.frombuffer(decode_mask_to_raster(m), dtype=np.uint8).reshape(m.height, m.width)
+        b = rec.bounds
+        top, left = int(round(b.top)), int(round(b.left))
+        bh, bw = int(round(b.bottom)) - top, int(round(b.right)) - left
+        if (bh, bw) != local.shape and bh > 0 and bw > 0:   # mask raster may be coarser than its box
+            rows = (np.arange(bh) * local.shape[0] / bh).astype(int)
+            cols = (np.arange(bw) * local.shape[1] / bw).astype(int)
+            local = local[rows][:, cols]
+        full = np.zeros((H, W), dtype=bool)
+        r0, c0 = max(top, 0), max(left, 0)
+        r1, c1 = min(top + local.shape[0], H), min(left + local.shape[1], W)
+        full[r0:r1, c0:c1] = local[r0 - top:r1 - top, c0 - left:c1 - left].astype(bool)
+        out.append((full, rec.confidence if rec.confidence is not None else 1.0))
+    return out

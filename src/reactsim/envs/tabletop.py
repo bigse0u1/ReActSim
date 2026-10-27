@@ -29,12 +29,14 @@ class ObjectSpec:
     xy: tuple[float, float]
     half_height: float        # from the YCB bbox; the model origin is the bbox centre
     yaw_range: float = 0.0    # random yaw +/- this (rad)
+    sam_prompt: str = ""      # noun phrase SAM 3.1 finds reliably; defaults to the name
 
 
 # Robot base is at x=-0.615; Panda reaches ~0.85 m, so keep everything within ~0.75 m of it.
 OBJECTS = {
     "banana": ObjectSpec("011_banana", "banana", "yellow", (0.05, -0.06), 0.0189, np.pi / 4),
-    "mug": ObjectSpec("025_mug", "mug", "red", (-0.10, -0.14), 0.0407, np.pi),
+    # With the handle turned away the mug reads as a cup: "mug" finds nothing, "cup" gets IoU 0.99.
+    "mug": ObjectSpec("025_mug", "mug", "red", (-0.10, -0.14), 0.0407, np.pi, sam_prompt="cup"),
     "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.12, -0.20), 0.0513),
     "plate": ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147),
 }

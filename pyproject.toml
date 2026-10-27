@@ -12,6 +12,8 @@ dependencies = [
     "pyyaml",
     "httpx",
     "python-dotenv",
+    "meta-sam-parser",
+    "pillow",
 ]
 
 [project.optional-dependencies]

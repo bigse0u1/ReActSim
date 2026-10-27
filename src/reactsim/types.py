@@ -18,6 +18,7 @@ class ObjectState:
     held: bool = False
     source: str = "gt"             # gt | depth (how position was estimated)
     confidence: float = 1.0
+    prompt: str = ""               # SAM noun phrase; defaults to the name
 
     def to_prompt_dict(self) -> dict[str, Any]:
         return {

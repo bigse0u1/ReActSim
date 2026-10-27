@@ -29,7 +29,7 @@ def backproject_mask(mask: np.ndarray, depth: np.ndarray, K: np.ndarray,
 
 
 def prompt_for(obj: ObjectState) -> str:
-    return obj.name.replace("_", " ")
+    return obj.prompt or obj.name.replace("_", " ")
 
 
 class Perception:

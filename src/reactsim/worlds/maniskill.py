@@ -72,7 +72,7 @@ class ManiSkillWorld:
         for name, actor in self.u.objects.items():
             spec = OBJECTS[name]
             gt[name] = ObjectState(name, _np(actor.pose.p[0]), spec.color, spec.kind,
-                                   held=name == holding)
+                                   held=name == holding, prompt=spec.sam_prompt or name)
         return Observation(
             rgb=_np(cam["rgb"][0]).astype(np.uint8),
             depth=_np(cam["depth"][0, ..., 0]).astype(np.float32) / 1000.0,  # mm -> m
@@ -86,6 +86,10 @@ class ManiSkillWorld:
     def segmentation_ids(self) -> dict[str, int]:
         """Actor name -> segmentation id, for the oracle segmenter."""
         return {name: int(a.per_scene_id[0]) for name, a in self.u.objects.items()}
+
+    def sam_aliases(self) -> dict[str, str]:
+        """SAM prompt -> actor name, for objects whose prompt differs from their name."""
+        return {s.sam_prompt: n for n, s in OBJECTS.items() if s.sam_prompt}
 
     def execute(self, action: Action) -> SkillResult:
         s, objs = self.skills, self.u.objects

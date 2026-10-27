@@ -1,8 +1,7 @@
 """Thin client for the Meta Model API (Muse Spark).
 
-TODO(day 4): confirm request/response format at https://dev.meta.ai/docs/quickstart.
-This assumes an OpenAI-style /chat/completions endpoint; if it differs, only
-this file should change.
+Uses the OpenAI-compatible Chat Completions endpoint (model e.g. "muse-spark-1.3").
+See https://dev.meta.ai/docs/quickstart.
 """
 
 from __future__ import annotations
@@ -46,7 +45,8 @@ class MetaChatClient:
                 ],
             },
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Muse request failed ({resp.status_code}): {resp.text[:300]}")
         data = resp.json()
         text = data["choices"][0]["message"]["content"]
         self.calls.append(LLMCallLog(time.time() - t0, len(system) + len(user),

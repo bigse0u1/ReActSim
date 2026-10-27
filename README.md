@@ -2,7 +2,7 @@
 
 **A robot that imagines before it acts, and recovers when the world fights back.**
 
-ReActSim is a closed-loop robot agent in a physics simulator. You give it an instruction in plain language. **SAM 3.1** finds the objects. **Muse Spark** plans with a fixed set of skills. A Franka Panda carries out the plan in ManiSkill 3. Then we interfere on purpose: knock the cube away, make the gripper drop it, move the target. The agent detects what went wrong from the physics state, explains the cause, and replans until the task is done.
+ReActSim is a closed-loop robot agent in a physics simulator. You give it an instruction in plain language. **SAM 3.1** finds the objects. **Muse Spark** plans with a fixed set of skills. A Franka Panda carries out the plan in ManiSkill 3, on a table of everyday YCB objects (a banana, a mug, a soup can, a plate). Then we interfere on purpose: knock the banana away, make the gripper drop it, move the target. The agent detects what went wrong from the physics state, explains the cause, and replans until the task is done.
 
 > *From following instructions to understanding failures.*
 
@@ -21,20 +21,37 @@ Built for the **Meta Global AI Developer Hackathon**, *Push the Frontier* track.
 | Failure handling | Retry, or nothing | A typed diagnosis (grasp slip, object moved, drop, missed placement) plus a recovery aimed at that cause |
 
 ### 🧠 Imagination: real physics lookahead
-Before committing to a risky skill (for example a top grasp or a side grasp), the agent snapshots the simulator state (`get_state_dict`). It runs each candidate forward and scores the result with the same diagnoser used at runtime. Then it restores the state and runs only the best option. This is actual simulation of the future, not a heuristic feasibility score. The dashboard shows the imagined outcomes side by side.
+Before committing to a risky skill (for example choosing between a `top`, `angled` or `side` grasp), the agent snapshots the simulator state (`get_state_dict`). It runs each candidate forward and scores the result with the same diagnoser used at runtime. Then it restores the state and runs only the best option. This is actual simulation of the future, not a heuristic feasibility score. The dashboard shows the imagined outcomes side by side.
 
 ### 😈 Chaos Mode: the world fights back
-Anyone can type during a run: *"knock the red cube off"*, *"make it drop it"*. Muse Spark turns the text into a bounded physical perturbation. The robot is not told that anything happened; it has to notice from perception and physics. Scripted chaos makes the benchmarks reproducible.
+Anyone can type during a run: *"knock the banana off"*, *"make it drop it"*. Muse Spark turns the text into a bounded physical perturbation. The robot is not told that anything happened; it has to notice from perception and physics. Scripted chaos makes the benchmarks reproducible.
 
 ### 🔍 Failure diagnosis it can explain
-Each skill states what should happen. The diagnoser compares that expectation with the observed state and produces a typed `FailureReport` with evidence. Muse Spark receives the report and must address the cause (*"the top grasp slipped on a cube rotated 40°, so I'm switching to a side grasp"*), not blindly repeat the action.
+Each skill states what should happen. The diagnoser compares that expectation with the observed state and produces a typed `FailureReport` with evidence. Muse Spark receives the report and must address the cause, not blindly repeat the action.
+
+### 🤝 The LLM proposes, physics disposes
+Excerpt from a real run (Muse Spark `muse-spark-1.3`, ManiSkill, seed 0). The banana was knocked out of the gripper by Chaos Mode:
+
+```text
+[01] failure  object_moved: banana moved 10.8 cm during the grasp
+[01] replan   reobserve → pick(banana) [side] → place_on(plate)
+              "Top-down grasp likely slipped off the curved banana surface and pushed it 10.8 cm.
+               Re-observing the new pose and retrying with a side grasp for more stable contact."
+[02] imagine  pick(banana) [side]    score=-1.00  controller_error   ← no feasible path
+[02] imagine  pick(banana) [top]     score=+1.00  none
+[02] imagine  pick(banana) [angled]  score=+0.00  grasp_failed
+[02] act      pick(banana) [top]
+[04] success  banana on plate
+```
+
+Muse Spark's reasoning sounded right but its choice would have failed. Imagination tested it in physics and overruled it.
 
 ---
 
 ## Architecture
 
 ```text
- "Put the red cube on the plate"          😈 Chaos (scripted / human / adversary)
+ "Put the banana on the plate"            😈 Chaos (scripted / human / adversary)
               │                                         │
               ▼                                         ▼
   ManiSkill 3 RGB-D ──► SAM 3.1 masks ──► depth back-projection ──► WorldState
@@ -68,16 +85,16 @@ src/reactsim/
   agent.py              ReAct loop
   types.py              shared dataclasses
   build.py              config → components
-  envs/tabletop.py      ReActTabletop-v1: Panda, three colored cubes, plate
+  envs/tabletop.py      ReActTabletop-v1: Panda + YCB banana, mug, soup can, plate
   worlds/               World interface; ManiSkill backend; FakeWorld (no-GPU test double)
   perception/           SAM 3.1 / oracle segmenter; mask+depth → 3D
   planning/             Muse Spark client, prompt, JSON schema + validator, baselines
-  control/skills.py     pick / place_on / push_aside on mplib
+  control/skills.py     pick (top / angled / side) / place_on / push_aside on mplib
   imagination/          fork-and-evaluate lookahead
   chaos/                scripted + natural-language perturbations
   evaluation/           failure diagnosis, metrics, episode logs
   viz/dashboard.py      rerun.io live view (optional)
-scripts/                run_demo.py, run_benchmark.py, check_env.py
+scripts/                run_demo.py, run_benchmark.py, check_env.py, check_api.py
 configs/default.yaml
 tests/
 ```
@@ -94,9 +111,11 @@ pytest -q
 
 # Real simulation
 pip install -e ".[sim,viz]"
+python -m mani_skill.utils.download_asset ycb -y     # YCB objects (~85 MB)
 python scripts/check_env.py
 python scripts/run_demo.py --world maniskill --offline        # sim + mock planner
-cp .env.example .env   # add MODEL_API_KEY
+cp .env.example .env   # then put MODEL_API_KEY in .env (never in .env.example)
+python scripts/check_api.py                                    # one Muse call + SAM masks vs ground truth
 python scripts/run_demo.py --world maniskill --chaos-stdin    # sim + Muse Spark + live chaos
 
 # Baseline comparison on identical seeds and perturbations
@@ -120,13 +139,26 @@ Every episode is logged to `outputs/*/episodes.jsonl`.
 <!-- RESULTS: fill only from real ManiSkill runs. FakeWorld numbers are not results. -->
 *Results: to be filled in from ManiSkill runs.*
 
+Measured so far (ManiSkill, 4 seeds each, pick and place on the plate; too few seeds to report as rates):
+
+| Object | `top` | `angled` | `side` |
+|---|---|---|---|
+| banana | 3/4 | 0/4 | 0/4 |
+| mug | 1/4 | 1/4 | 0/4 |
+| soup can | 4/4 | 4/4 | 3/4 |
+
+SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation: banana 0.99, can 0.98, plate 0.99, mug 0.99 (prompted as "cup"; "mug" finds nothing when the handle faces away).
+
 ## Status
 
 - [x] Agent loop, validator, diagnosis, imagination, and chaos, tested end to end on FakeWorld
-- [ ] `ReActTabletop-v1` checked on ManiSkill 3
-- [ ] mplib skills checked (pick / place / push)
-- [ ] SAM 3.1 endpoint wired up (`perception/segmenter.py` TODOs)
-- [ ] Muse Spark endpoint checked (`planning/llm.py` TODO)
+- [x] `ReActTabletop-v1` with YCB objects on ManiSkill 3
+- [x] mplib skills: pick (`top` / `angled` / `side`) and place
+- [x] Muse Spark planning and replanning in the loop (first full run succeeded)
+- [x] SAM 3.1 segmentation via the Model API (checked against ground truth)
+- [ ] SAM 3.1 inside the agent loop (the loop still uses the simulator's segmentation)
+- [ ] Mug grasps (the gripper aims at the hollow centre; needs rim or handle grasps)
+- [ ] *Show, don't tell*: learn the task from a phone video of a human hand (SAM 3.1 video tracking + Muse Spark)
 - [ ] rerun dashboard with the imagined-outcomes view
 - [ ] Benchmark on ManiSkill and the demo video
 
@@ -136,4 +168,4 @@ All code in this repository was written during the hackathon (from 2026-10-26). 
 
 ## Acknowledgements
 
-[ManiSkill 3](https://github.com/haosulab/ManiSkill) · [SAPIEN](https://sapien.ucsd.edu) · [mplib](https://github.com/haosulab/MPlib) · Meta SAM 3.1 and Muse Spark via the [Meta Model API](https://dev.meta.ai/docs/overview) · [rerun](https://rerun.io)
+[ManiSkill 3](https://github.com/haosulab/ManiSkill) · [YCB objects](https://www.ycbbenchmarks.com) · [SAPIEN](https://sapien.ucsd.edu) · [mplib](https://github.com/haosulab/MPlib) · Meta SAM 3.1 and Muse Spark via the [Meta Model API](https://dev.meta.ai/docs/overview) · [rerun](https://rerun.io)
