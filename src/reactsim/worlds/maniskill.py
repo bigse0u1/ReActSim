@@ -52,8 +52,11 @@ def _np(x):
 class ManiSkillWorld:
     def __init__(self, env_id="ReActTabletop-v1", render_mode="rgb_array",
                  sim_backend="cpu", record_dir: str | None = None, vis=False, scene="kitchen",
-                 robot="panda"):
+                 robot="panda", grasp_from="sim"):
         self.robot = robot
+        self.grasp_from = grasp_from    # "sim": actor geometry | "perception": mask + depth
+        self.segmenter = None           # set by build when grasp_from == "perception"
+        self._box_cache = {}
         hand = robot == "hand"
         env = gym.make(
             env_id,
@@ -119,6 +122,23 @@ class ManiSkillWorld:
             gripper_holding=holding,
         )
 
+    def _perceived_box(self, name: str):
+        """Box of `name` from the camera: segmentation mask + depth (no simulator geometry).
+        Cached per scene state, so Imagination's candidates share one segmentation call."""
+        from reactsim.perception.grounding import estimate_box, mask_points
+        from reactsim.perception.segmenter import OracleSegmenter
+
+        key = (name, tuple(np.round(_np(self.u.objects[name].pose.raw_pose[0]), 4)))
+        if key not in self._box_cache:
+            obs = self.observe()
+            prompt = self.u.specs[name].sam_prompt or name
+            if isinstance(self.segmenter, OracleSegmenter):
+                self.segmenter.segmentation = obs.segmentation
+            m = self.segmenter.segment(obs.rgb, [prompt]).get(prompt)
+            pts = mask_points(m.mask, obs.depth, obs.intrinsic, obs.extrinsic) if m is not None else None
+            self._box_cache[key] = estimate_box(pts) if pts is not None and len(pts) else None
+        return self._box_cache[key]
+
     def segmentation_ids(self) -> dict[str, int]:
         """Actor name -> segmentation id, for the oracle segmenter."""
         return {name: int(a.per_scene_id[0]) for name, a in self.u.objects.items()}
@@ -150,7 +170,12 @@ class ManiSkillWorld:
         s, objs = self.skills, self.u.objects
         t = action.type
         if t == ActionType.PICK:
-            return s.pick(objs[action.target], action.grasp)
+            box = None
+            if self.grasp_from == "perception":
+                box = self._perceived_box(action.target)
+                if box is None:
+                    return SkillResult(False, f"cannot see {action.target} well enough to grasp it")
+            return s.pick(objs[action.target], action.grasp, box=box)
         if t == ActionType.PLACE_ON:
             ref = _np(objs[action.reference].pose.p[0])
             held = self._holding()

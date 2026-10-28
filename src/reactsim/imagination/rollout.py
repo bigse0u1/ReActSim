@@ -10,12 +10,13 @@ too. Either pause recording or use those frames as the "ghost" split-screen.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
 from reactsim.evaluation.diagnosis import diagnose, goal_not_met
 from reactsim.perception.grounding import Perception
-from reactsim.types import Action, FailureReport, FailureType, Goal, SkillResult
+from reactsim.types import Action, FailureReport, FailureType, Goal, SkillResult, WorldState
 
 
 @dataclass
@@ -44,6 +45,12 @@ class Imagination:
         self.perception = perception
         self.max_candidates = max_candidates
 
+    def _physical_state(self, step: int) -> WorldState:
+        """Imagined outcomes are judged on the simulator's state, not through the camera:
+        an object knocked out of view can still be grasped in physics."""
+        obs = self.world.observe()
+        return WorldState(copy.deepcopy(obs.gt_objects), obs.gripper_holding, step)
+
     def evaluate(self, candidates: list[Action], goal: Goal, step: int,
                  then: Action | None = None) -> list[Imagined]:
         """Run each candidate (and `then`, if given) from the same state. A grasp that
@@ -52,13 +59,13 @@ class Imagination:
         set_recording = getattr(self.world, "set_recording", lambda on: None)
         set_recording(False)
         snap = self.world.snapshot()
-        before = self.perception.perceive(self.world.observe(), step)
+        before = self._physical_state(step)
         out = []
         try:
             for a in candidates[: self.max_candidates]:
                 res = self.world.execute(a)
                 trace = getattr(self.world, "last_trace", None)
-                after = self.perception.perceive(self.world.observe(), step)
+                after = self._physical_state(step)
                 fail = diagnose(a, res, before, after, goal.target)
                 then_trace = None
                 if then is not None and res.ok and not fail.is_failure:

@@ -66,13 +66,13 @@ class PandaSkills:
     def _ok(res) -> bool:
         return not (isinstance(res, int) and res == -1)
 
-    def _approach(self, actor, grasp: str) -> tuple[np.ndarray, np.ndarray]:
+    def _approach(self, p: np.ndarray, grasp: str) -> tuple[np.ndarray, np.ndarray]:
         """Approach direction and closing hint. Non-top grasps come from the robot's side,
         pitched down; measured on ReActTabletop: 50° lifts reliably, 0° often slips."""
         if grasp == "top":
             closing = self.env.agent.tcp.pose.to_transformation_matrix()[0, :3, 1].cpu().numpy()
             return np.array([0.0, 0.0, -1.0]), closing
-        p, base = actor.pose.sp.p, self.env.agent.robot.pose.sp.p
+        base = self.env.agent.robot.pose.sp.p
         h = np.array([p[0] - base[0], p[1] - base[1], 0.0])
         h /= np.linalg.norm(h)
         pitch = np.deg2rad(GRASP_PITCH_DEG[grasp])
@@ -80,14 +80,16 @@ class PandaSkills:
         closing = np.cross(approaching, [0.0, 0.0, 1.0])
         return approaching, closing / np.linalg.norm(closing)
 
-    def pick(self, actor, grasp: str = "top") -> SkillResult:
+    def pick(self, actor, grasp: str = "top", box=None) -> SkillResult:
+        """box: the object's box as perceived (estimate_box); None uses the simulator's geometry."""
         t0 = time.time()
         env = self.env
-        obb = get_actor_obb(actor)
-        approaching, target_closing = self._approach(actor, grasp)
+        obb = box if box is not None else get_actor_obb(actor)
+        p = np.array(obb.primitive.transform)[:3, 3] if box is not None else actor.pose.sp.p
+        approaching, target_closing = self._approach(p, grasp)
         info = compute_grasp_info_by_obb(obb, approaching=approaching,
                                          target_closing=target_closing, depth=FINGER_LENGTH)
-        center = actor.pose.sp.p + np.array([0.0, 0.0, 0.0 if grasp == "top" else SIDE_GRASP_DZ])
+        center = p + np.array([0.0, 0.0, 0.0 if grasp == "top" else SIDE_GRASP_DZ])
         grasp_pose = env.agent.build_grasp_pose(approaching, info["closing"], center)
         reach_pose = grasp_pose * sapien.Pose([0, 0, -APPROACH_OFFSET])
 

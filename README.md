@@ -171,13 +171,20 @@ Every episode is logged to `outputs/*/episodes.jsonl`.
 <!-- RESULTS: fill only from real ManiSkill runs. FakeWorld numbers are not results. -->
 **Benchmark** (ManiSkill, kitchen scene, Panda, "put the banana on the plate", oracle segmentation, real Muse Spark `muse-spark-1.3`). The disturbance hits right after the first pick.
 
-Main comparison, seeds 0-19 (`outputs/bench_v2` for the rule baseline, `outputs/bench_v3` for ours):
+Main comparison, seeds 0-19, three objects (rule: `outputs/bench_v2`, `outputs/bench_paper`; Muse alone: `outputs/bench_v3`; ours: `outputs/bench_final`):
 
-| Condition | B: rule-based retry | **Muse Spark + Imagination** |
-|---|---|---|
-| knock (chaos ball) | 17/20 | **19/20** |
-| drop (gripper forced open) | 12/20 | **20/20** |
-| mean recoveries (knock / drop) | 1.4 / 2.5 | 1.4 / **1.1** |
+| Task / disturbance | B: rule-based retry | Muse Spark, no Imagination | **Muse Spark + Imagination** |
+|---|---|---|---|
+| banana / knock | 17/20 | 15/20 | 17/20 |
+| banana / drop | 12/20 | 14/20 | **20/20** |
+| can / knock | 4/20 | - | 5/20 |
+| can / drop | 19/20 | - | 18/20 |
+| orange / knock | 17/20 | - | 19/20 |
+| orange / drop | 20/20 | - | 20/20 |
+
+Only banana / drop is a significant difference (Fisher exact, p=0.003 vs rule, p=0.02 vs Muse alone). Imagination matters when the right grasp depends on how the object landed (a curved banana); a can that stays upright or a round orange is handled by simple retries. Against Muse alone, Imagination halves recovery attempts and Muse calls under *drop* (3.05 to 1.05, 4.0 to 2.0). The knock knocks the can over, after which "upright on the plate" cannot be met by anyone.
+
+**End to end from SAM 3.1** (`outputs/bench_sam`, banana, ours): with object positions for planning *and* grasp geometry taken from SAM 3.1 masks plus depth (`--segmenter sam3 --grasp-from perception`; no simulator ground truth), drop 19/20 and knock 17/20, against 20/20 and 17/20 with ground truth. The grasp box comes from the masked point cloud: the centre from the top surface (seen whole from above; the plain centroid is pulled toward the camera), the long axis from the spread of the points; its centre lands 0.1-0.8 cm from the true one.
 
 All four systems, seeds 0-9 (`outputs/bench_main`, before the change described below):
 
@@ -212,7 +219,7 @@ SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation:
 - [x] Muse Spark planning and replanning in the loop (first full run succeeded)
 - [x] SAM 3.1 segmentation via the Model API (checked against ground truth)
 - [x] SAM 3.1 inside the agent loop (`--segmenter sam3`): looks at the start, after each failure and on `reobserve`; positions from depth are 0.6–4.2 cm from ground truth
-- [ ] Grasp from perceived positions (planning uses SAM + depth; the pick skill still targets the simulator's object pose)
+- [x] Grasp from perceived positions (`--grasp-from perception`): SAM 3.1 mask + depth -> oriented box, end to end 36/40
 - [ ] Mug grasps (the gripper aims at the hollow centre; needs rim or handle grasps)
 - [x] *Show, don't tell*: phone video of a human hand → SAM 3.1 video tracking + Muse Spark → robot, adapting the human's grasp through Imagination (3/3 clips)
 - [x] Imagination scores pick + place together and the real run replays the imagined joint commands

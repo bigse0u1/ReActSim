@@ -194,12 +194,13 @@ class HandSkills:
         return [PADS[i].split("_")[0] for i in sorted(touching)]
 
     # ---- skills ----------------------------------------------------------------------
-    def pick(self, actor, grasp: str = "top") -> SkillResult:
+    def pick(self, actor, grasp: str = "top", box=None) -> SkillResult:
+        """box: the object's box as perceived (estimate_box); None uses the simulator's pose."""
         t0 = time.time()
         if grasp not in OPEN:
             return SkillResult(False, f"this hand has no {grasp} grasp", time.time() - t0)
         name = self._name_of(actor)
-        p0 = actor.pose.sp.p.copy()
+        p0 = np.array(box.primitive.transform)[:3, 3] if box is not None else actor.pose.sp.p.copy()
         center = p0 + [0, 0, SIDE_ABOVE_CENTER if grasp == "side" else 0.0]
         base = np.array([BASE_X, 0.0])
         h = np.r_[p0[:2] - base, 0.0]

@@ -14,6 +14,7 @@ maniskill:
 perception:
   segmenter: oracle        # oracle | sam3
   sam_model: sam-3.1
+  grasp_from: sim          # sim (simulator geometry) | perception (mask + depth point cloud)
 
 planning:
   planner: muse            # muse | rule | fixed

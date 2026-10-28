@@ -27,7 +27,8 @@ def build_world(cfg: dict, out_dir: str | None = None):
     m = cfg["maniskill"]
     return ManiSkillWorld(m["env_id"], m["render_mode"], m["sim_backend"],
                           record_dir=out_dir if m.get("record_video") else None,
-                          scene=m.get("scene", "kitchen"), robot=m.get("robot", "panda"))
+                          scene=m.get("scene", "kitchen"), robot=m.get("robot", "panda"),
+                          grasp_from=cfg["perception"].get("grasp_from", "sim"))
 
 
 def default_instruction(cfg: dict) -> str:
@@ -68,6 +69,8 @@ def build_perception(cfg: dict, world) -> Perception:
 def build_agent(cfg: dict, offline: bool = False, out_dir: str | None = None) -> ReActAgent:
     world = build_world(cfg, out_dir)
     perception = build_perception(cfg, world)
+    if getattr(world, "grasp_from", "sim") == "perception":
+        world.segmenter = perception.segmenter    # the pick skill sees the target through it
     planner = build_planner(cfg, offline)
     is_muse = cfg["planning"]["planner"] == "muse"
     imagination = (Imagination(world, perception, cfg["imagination"]["max_candidates"])

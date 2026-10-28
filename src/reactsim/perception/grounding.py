@@ -74,3 +74,46 @@ class Perception:
                     obj.position = p
                     obj.source = "depth"
         return WorldState(objects, obs.gripper_holding, step)
+
+
+def mask_points(mask: np.ndarray, depth: np.ndarray, K: np.ndarray, extrinsic: np.ndarray,
+                erode: int = 2) -> np.ndarray:
+    """World-frame points of the masked pixels. The mask is eroded first: pixels on the
+    silhouette mix object and background depth ("flying pixels")."""
+    import cv2
+
+    m = cv2.erode(mask.astype(np.uint8), np.ones((2 * erode + 1, 2 * erode + 1), np.uint8)).astype(bool)
+    vs, us = np.nonzero(m & (depth > 0))
+    z = depth[vs, us]
+    pts_cam = np.stack([(us - K[0, 2]) * z / K[0, 0], (vs - K[1, 2]) * z / K[1, 1], z], axis=1)
+    R, t = extrinsic[:3, :3], extrinsic[:3, 3]
+    return (pts_cam - t) @ R
+
+
+def estimate_box(points: np.ndarray, table_z: float = 0.0, min_points: int = 30):
+    """Oriented box of an object resting on the table, from the points the camera sees.
+
+    The camera only sees the top and front of an object, so the plain centroid is pulled
+    toward the camera. The top surface is seen whole from above, so its centroid gives the
+    centre in x-y; the object stands on the table, so its height is the highest point.
+    The long axis comes from the spread of all points in x-y (matters for a banana).
+    Returns a trimesh Box (same type as ManiSkill's actor OBB) or None.
+    """
+    import trimesh
+
+    pts = points[points[:, 2] > table_z + 0.004]          # drop the table
+    if len(pts) < min_points:
+        return None
+    zmax = np.percentile(pts[:, 2], 98)                   # robust to stray pixels
+    top = pts[pts[:, 2] > zmax - 0.012]
+    c_xy = top[:, :2].mean(axis=0)
+    xy = pts[:, :2] - pts[:, :2].mean(axis=0)
+    major = np.linalg.eigh(xy.T @ xy)[1][:, -1]
+    minor = np.array([-major[1], major[0]])
+    d = pts[:, :2] - c_xy
+    length = 2 * np.percentile(np.abs(d @ major), 98)
+    width = 2 * np.percentile(np.abs(d @ minor), 98)     # the far half is hidden: mirror the near one
+    T = np.eye(4)
+    T[:3, 0], T[:3, 1], T[:3, 2] = [*major, 0], [*minor, 0], [0, 0, 1]
+    T[:3, 3] = [*c_xy, table_z + zmax / 2]
+    return trimesh.primitives.Box(extents=[length, width, zmax - table_z], transform=T)

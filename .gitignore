@@ -8,3 +8,6 @@ videos/
 .pytest_cache/
 demos/
 data/
+
+# paper drafts and figures stay local
+paper/
