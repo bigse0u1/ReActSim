@@ -28,7 +28,8 @@ def build_world(cfg: dict, out_dir: str | None = None):
     return ManiSkillWorld(m["env_id"], m["render_mode"], m["sim_backend"],
                           record_dir=out_dir if m.get("record_video") else None,
                           scene=m.get("scene", "kitchen"), robot=m.get("robot", "panda"),
-                          grasp_from=cfg["perception"].get("grasp_from", "sim"))
+                          grasp_from=cfg["perception"].get("grasp_from", "sim"),
+                          clear_view=cfg["perception"].get("clear_view"))
 
 
 def default_instruction(cfg: dict) -> str:

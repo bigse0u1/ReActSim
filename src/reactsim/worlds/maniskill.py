@@ -52,9 +52,12 @@ def _np(x):
 class ManiSkillWorld:
     def __init__(self, env_id="ReActTabletop-v1", render_mode="rgb_array",
                  sim_backend="cpu", record_dir: str | None = None, vis=False, scene="kitchen",
-                 robot="panda", grasp_from="sim"):
+                 robot="panda", grasp_from="sim", clear_view=None):
         self.robot = robot
         self.grasp_from = grasp_from    # "sim": actor geometry | "perception": mask + depth
+        # Move the arm out of the camera's view before each pick. Needed when grasping from
+        # perception (the hand hides the object); on by default only then.
+        self.clear_view = grasp_from == "perception" if clear_view is None else clear_view
         self.segmenter = None           # set by build when grasp_from == "perception"
         self._box_cache = {}
         hand = robot == "hand"
@@ -171,6 +174,8 @@ class ManiSkillWorld:
         t = action.type
         if t == ActionType.PICK:
             box = None
+            if self.clear_view and self._holding() is None:
+                s.clear_view()   # look with the arm out of the way, as a person moves their hand to see
             if self.grasp_from == "perception":
                 box = self._perceived_box(action.target)
                 if box is None:

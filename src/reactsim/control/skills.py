@@ -28,6 +28,7 @@ FINGER_LENGTH = 0.025
 GRASP_PITCH_DEG = {"angled": 50.0, "side": 0.0}   # "top" is straight down
 SIDE_GRASP_DZ = 0.01   # grip slightly above centre so the hand clears the table
 APPROACH_OFFSET = 0.08
+CLEAR_VIEW_OFFSET = (0.40, 0.0, 0.35)   # from the robot base: behind the objects as the camera sees them
 LIFT_HEIGHT = 0.15
 
 
@@ -135,6 +136,18 @@ class PandaSkills:
             if not self._ok(self.planner.move_to_pose_with_screw(pose)):
                 return SkillResult(False, "push path failed", time.time() - t0)
         return SkillResult(True, "push finished", time.time() - t0)
+
+    def clear_view(self) -> bool:
+        """Move the arm back toward its base, out of the camera's line of sight to the table.
+        Right after a slip the hand hovers over the object and hides most of it."""
+        tcp = self.env.agent.tcp.pose.sp
+        base = self.env.agent.robot.pose.sp.p
+        target = base + np.array(CLEAR_VIEW_OFFSET)
+        if np.linalg.norm(tcp.p - target) < 0.05:
+            return True
+        pose = sapien.Pose(p=target, q=tcp.q)
+        return (self._ok(self.planner.move_to_pose_with_screw(pose))
+                or self._ok(self.planner.move_to_pose_with_RRTConnect(pose)))
 
     def home(self) -> SkillResult:
         t0 = time.time()

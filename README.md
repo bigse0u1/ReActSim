@@ -116,7 +116,7 @@ src/reactsim/
   worlds/               World interface; ManiSkill backend; FakeWorld (no-GPU test double)
   perception/           SAM 3.1 / oracle segmenter; mask+depth → 3D
   planning/             Muse Spark client, prompt, JSON schema + validator, baselines
-  control/              Panda skills (top / angled / side) and five-finger hand skills (top / side)
+  control/              Panda skills and five-finger hand skills (top / angled / side each)
   imagination/          fork-and-evaluate lookahead (pick + place), exact replay
   imitation/            Show, don't tell: video events + demonstration
   chaos/                scripted + natural-language perturbations
@@ -184,7 +184,18 @@ Main comparison, seeds 0-19, three objects (rule: `outputs/bench_v2`, `outputs/b
 
 Only banana / drop is a significant difference (Fisher exact, p=0.003 vs rule, p=0.02 vs Muse alone). Imagination matters when the right grasp depends on how the object landed (a curved banana); a can that stays upright or a round orange is handled by simple retries. Against Muse alone, Imagination halves recovery attempts and Muse calls under *drop* (3.05 to 1.05, 4.0 to 2.0). The knock knocks the can over, after which "upright on the plate" cannot be met by anyone.
 
-**End to end from SAM 3.1** (`outputs/bench_sam`, banana, ours): with object positions for planning *and* grasp geometry taken from SAM 3.1 masks plus depth (`--segmenter sam3 --grasp-from perception`; no simulator ground truth), drop 19/20 and knock 17/20, against 20/20 and 17/20 with ground truth. The grasp box comes from the masked point cloud: the centre from the top surface (seen whole from above; the plain centroid is pulled toward the camera), the long axis from the spread of the points; its centre lands 0.1-0.8 cm from the true one.
+**End to end from SAM 3.1** (`outputs/bench_sam2`, banana, seeds 0-19): object positions for planning *and* grasp geometry come from SAM 3.1 masks plus depth (`--segmenter sam3 --grasp-from perception`; no simulator ground truth), for every system:
+
+| Disturbance | B: rule-based retry | Muse Spark, no Imagination | **Muse Spark + Imagination** |
+|---|---|---|---|
+| drop | 19/20 | 18/20 | **20/20** |
+| knock | 15/20 | 10/20 | **20/20** |
+| total | 34/40 | 28/40 | **40/40** |
+| Muse calls / recoveries per episode | - / 2.0 | 3.8 / 2.8 | **2.2 / 1.2** |
+
+40/40 vs 28/40 without Imagination is p=0.0002; vs the rule baseline p=0.026. The grasp box comes from the masked point cloud: the centre from the top surface (seen whole from above; the plain centroid is pulled toward the camera), the long axis from the spread of the points; its centre lands 0.1-0.8 cm from the true one. Before each pick the arm first moves out of the camera's view: right after a slip the hand hovers over the banana and hides most of it (visible area 2,389 to 736 pixels, position error 0.2 to 7 cm).
+
+**Why the rule baseline swings.** On the same banana / drop task its success depends on the setting: 12/20 with ground-truth geometry, 14/20 when it also clears the view, 19/20 with perceived geometry; ours is 20/20 in all of them. The logs show why: after the forced drop the failure reads as "grasp failed", so the rule switches to its next grasp (angled), which keeps pushing the curved banana away, and whether that second choice happens to work depends on the setting. Imagination tries all three first and goes back to the top grasp that works. (Checked and ruled out: the ground-truth box centre is on the banana; from the same post-drop states both boxes grasp 12/12.)
 
 All four systems, seeds 0-9 (`outputs/bench_main`, before the change described below):
 
@@ -224,7 +235,8 @@ SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation:
 - [x] *Show, don't tell*: phone video of a human hand → SAM 3.1 video tracking + Muse Spark → robot, adapting the human's grasp through Imagination (3/3 clips)
 - [x] Imagination scores pick + place together and the real run replays the imagined joint commands
 - [x] Second body: xArm7 + five-finger Ability hand (`--robot hand`), same agent; pick and place 9/9, human videos 3/3
-- [ ] Hand: `side` grasp (plans fail or the object slides), Chaos ball tuned for round objects (it throws the orange 1.3 m)
+- [x] Hand: `angled` grasp (same five-finger enclose, approach pitched 50 deg): picks 8/9, but placing from a tilted hand mostly fails (Imagination rejects it unless the path from above is blocked)
+- [ ] Hand: `side` grasp (plans fail or the object slides), placing after an angled grasp, Chaos ball tuned for round objects (it throws the orange 1.3 m)
 - [ ] rerun dashboard with the imagined-outcomes view
 - [ ] Benchmark on ManiSkill and the demo video
 

@@ -55,6 +55,7 @@ def main():
     ap.add_argument("--robot", choices=["panda", "hand"])
     ap.add_argument("--segmenter", choices=["oracle", "sam3"], help="perception for planning (and grasping)")
     ap.add_argument("--grasp-from", choices=["sim", "perception"], help="where the pick skill gets the object's geometry")
+    ap.add_argument("--clear-view", choices=["on", "off"], help="move the arm out of view before each pick (default: on with perception)")
     ap.add_argument("--seeds", type=int, default=10)
     ap.add_argument("--systems", default=",".join(SYSTEMS))
     ap.add_argument("--conditions", default=",".join(CONDITIONS))
@@ -79,6 +80,8 @@ def main():
         base["perception"]["segmenter"] = args.segmenter
     if args.grasp_from:
         base["perception"]["grasp_from"] = args.grasp_from
+    if args.clear_view:
+        base["perception"]["clear_view"] = args.clear_view == "on"
     base["maniskill"]["record_video"] = False
     instruction = args.instruction or default_instruction(base)
     root = Path(args.out) if args.out else Path("outputs") / time.strftime("bench_%Y%m%d_%H%M%S")

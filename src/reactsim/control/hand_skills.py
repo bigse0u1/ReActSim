@@ -4,7 +4,8 @@ Grasps (the agent's vocabulary, so Muse Spark and Imagination use them unchanged
   top    five fingers open around the object from above, close until each pad touches,
          then squeeze. Measured (5 seeds, held 3 s): orange 4/5, can 5/5, cup 3/5.
   side   palm against the object's side, fingers wrap around it.
-  angled not available on this hand; reported as a failed skill so Imagination drops it.
+  angled the same five-finger enclose, but the hand comes in pitched 50 deg down from the
+         robot's side: an alternative when the path straight down is blocked.
 
 Every other object is a point-cloud obstacle for the planner, and so is the target
 until the hand closes in on it (otherwise the forearm knocks it over on the way).
@@ -30,6 +31,8 @@ except ImportError:  # pragma: no cover
 # Hand shapes: [thumb opposition, index, middle, ring, pinky, thumb flex] (q1 targets)
 OPEN = {"top": np.array([1.8, 0.0, 0.0, 0.0, 0.0, 0.0]), "side": np.zeros(6)}
 CLOSED = {"top": np.array([1.8, 1.0, 1.0, 1.0, 1.0, 1.0]), "side": np.array([1.2, 1.6, 1.6, 1.6, 1.6, 0.0])}
+OPEN["angled"], CLOSED["angled"] = OPEN["top"], CLOSED["top"]   # same hand shape, tilted approach
+ANGLED_PITCH_DEG = 50.0
 RELAXED = np.zeros(6)
 # Measured fingertip geometry in the wrist frame with OPEN["top"]: the thumb tip and the
 # midpoint of the index/middle tips, 16 cm apart. The hand is turned so this line is level.
@@ -37,7 +40,7 @@ TOP_THUMB = np.array([-0.011, 0.096, 0.061])
 TOP_FINGERS = np.array([-0.019, -0.013, 0.175])
 SIDE_CENTER = np.array([-0.005, 0.045, 0.10])   # where a can sits in the palm for "side"
 SIDE_ABOVE_CENTER = 0.025       # side grasp: keep the hand's lower edge off the table
-STANDOFF = {"top": 0.12, "side": 0.08}
+STANDOFF = {"top": 0.12, "angled": 0.12, "side": 0.08}
 TRANSIT_RISE = 0.15
 LIFT_HEIGHT = 0.15
 FINGER_RATE = 0.03              # rad per control step
@@ -45,7 +48,9 @@ CONTACT_N = 0.5                 # N on a finger pad counts as touching
 SQUEEZE = 0.5                   # rad past first contact: the PD then presses at its force limit
 OBSTACLE_PAD = 0.02
 SETTLE_STEPS = 15
+RRT_ATTEMPTS = 3
 HEADINGS_DEG = (0, 45, -45, 90, -90, 135, -135, 180)
+ANGLED_HEADINGS_DEG = (0, 30, -30)   # tilted from the robot's side, so only near-frontal headings
 PADS = {0: "thumb_L2", 1: "index_L2", 2: "middle_L2", 3: "ring_L2", 4: "pinky_L2"}
 
 
@@ -119,7 +124,10 @@ class HandSkills:
         goal = np.r_[pose.p, pose.q]
         kw = dict(time_step=self.env.control_timestep, use_point_cloud=obstacles)
         res = self.planner.plan_screw(goal, start, **kw)
-        if res["status"] != "Success":
+        # RRT is random and gives up after its time budget, so one miss is not "no path".
+        for _ in range(RRT_ATTEMPTS):
+            if res["status"] == "Success":
+                break
             res = self.planner.plan_qpos_to_pose(goal, start, **kw)
         return res if res["status"] == "Success" else None
 
@@ -152,7 +160,7 @@ class HandSkills:
 
     # ---- grasp geometry --------------------------------------------------------------
     def _wrist_pose(self, center, heading: np.ndarray, grasp: str, standoff: float = 0.0) -> sapien.Pose:
-        if grasp == "top":
+        if grasp in ("top", "angled"):
             u = TOP_FINGERS - TOP_THUMB
             u /= np.linalg.norm(u)
             a = np.array([0, 0, 1.0]) - u[2] * u
@@ -160,6 +168,9 @@ class HandSkills:
             local = np.stack([u, a, np.cross(u, a)], 1)
             uw = np.cross([0, 0, 1.0], heading)        # thumb-to-fingers level, across the approach
             aw = np.array([0, 0, -1.0])                # fingers point down
+            if grasp == "angled":                      # ... or down and away from the robot
+                pitch = np.deg2rad(ANGLED_PITCH_DEG)
+                aw = heading * np.cos(pitch) + np.array([0, 0, -np.sin(pitch)])
             R = np.stack([uw, aw, np.cross(uw, aw)], 1) @ local.T
             mid = (TOP_THUMB + TOP_FINGERS) / 2
             return sapien.Pose(p=center - R @ mid - aw * standoff, q=mat2quat(R))
@@ -210,7 +221,7 @@ class HandSkills:
         self._hold(25)
         # A top grasp works from any heading: turn the hand until it fits between the
         # other objects (the thumb sticks out 11 cm). The side grasp faces the object.
-        headings = HEADINGS_DEG if grasp == "top" else (0,)
+        headings = {"top": HEADINGS_DEG, "angled": ANGLED_HEADINGS_DEG}.get(grasp, (0,))
         # Plan all three legs for a heading before moving, so a heading that fails part-way
         # leaves no motion behind (and the executed commands can be replayed exactly).
         for deg in headings:
@@ -263,6 +274,14 @@ class HandSkills:
 
     def push_aside(self, actor, dy: float = 0.10) -> SkillResult:
         return SkillResult(False, "push_aside is not implemented for the hand")
+
+    def clear_view(self) -> bool:
+        """Move the hand back toward the base, out of the camera's line of sight (see PandaSkills)."""
+        target = np.array([BASE_X + 0.30, 0.0, 0.40])
+        if np.linalg.norm(self.wrist.pose.sp.p - target) < 0.05:
+            return True
+        self._set_obstacles(skip={"plate"})
+        return self._move(sapien.Pose(p=target, q=self.wrist.pose.sp.q))
 
     def home(self) -> SkillResult:
         t0 = time.time()
