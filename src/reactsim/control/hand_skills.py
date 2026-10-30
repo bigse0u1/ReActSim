@@ -49,6 +49,7 @@ SQUEEZE = 0.5                   # rad past first contact: the PD then presses at
 OBSTACLE_PAD = 0.02
 SETTLE_STEPS = 15
 RRT_ATTEMPTS = 3
+RELEASE_STEPS = 25   # at 0.1 rad/step: fully open from any grip
 HEADINGS_DEG = (0, 45, -45, 90, -90, 135, -135, 180)
 ANGLED_HEADINGS_DEG = (0, 30, -30)   # tilted from the robot's side, so only near-frontal headings
 PADS = {0: "thumb_L2", 1: "index_L2", 2: "middle_L2", 3: "ring_L2", 4: "pinky_L2"}
@@ -79,8 +80,12 @@ class HandSkills:
         self.hand = np.r_[-t[0], t[1:5], t[5]]
 
     def release(self) -> None:
+        """Let go at once (a forced drop): open at the controller's full rate. At the normal
+        finger rate the squeeze margin takes ~17 steps to undo and the object stays held."""
         self.hand = RELAXED.copy()
-        self._hold(10)
+        arm = self._q()[:7] if self.arm_target is None else self.arm_target
+        for _ in range(RELEASE_STEPS):
+            self._step(arm, rate=0.1)
 
     def idle(self, steps: int) -> None:
         self._hold(steps)
@@ -100,13 +105,13 @@ class HandSkills:
         q, names = self._q(), [j.name for j in self.robot.get_active_joints()]
         return np.array([q[names.index(n)] for n in self.planner.user_joint_names])
 
-    def _step(self, arm: np.ndarray) -> None:
+    def _step(self, arm: np.ndarray, rate: float = FINGER_RATE) -> None:
         """One control step: arm to `arm`, each finger a bounded step toward self.hand
         (q2 follows q1 as the removed mimic would)."""
         # The hand controller takes normalised deltas (+-0.1 rad) on its own target. Steer that
         # target, not the measured angle: a finger blocked by the object lags its target, and
         # deltas from the measured angle would wind the target up past the fingers.
-        h, r = self._finger_target(), FINGER_RATE
+        h, r = self._finger_target(), rate
         t1 = np.clip(-self.hand[0] - h[0], -r, r) / 0.1
         f1 = np.clip(self.hand[1:5] - h[1:5], -r, r) / 0.1
         t2 = np.clip(self.hand[5] - h[5], -r, r) / 0.1
@@ -205,7 +210,7 @@ class HandSkills:
         return [PADS[i].split("_")[0] for i in sorted(touching)]
 
     # ---- skills ----------------------------------------------------------------------
-    def pick(self, actor, grasp: str = "top", box=None) -> SkillResult:
+    def pick(self, actor, grasp: str = "top", box=None, approach_deg: float | None = None) -> SkillResult:
         """box: the object's box as perceived (estimate_box); None uses the simulator's pose."""
         t0 = time.time()
         if grasp not in OPEN:
@@ -222,6 +227,8 @@ class HandSkills:
         # A top grasp works from any heading: turn the hand until it fits between the
         # other objects (the thumb sticks out 11 cm). The side grasp faces the object.
         headings = {"top": HEADINGS_DEG, "angled": ANGLED_HEADINGS_DEG}.get(grasp, (0,))
+        if approach_deg is not None and grasp != "top":
+            headings = (approach_deg,)   # Imagination asked for this side explicitly
         # Plan all three legs for a heading before moving, so a heading that fails part-way
         # leaves no motion behind (and the executed commands can be replayed exactly).
         for deg in headings:

@@ -82,4 +82,5 @@ def build_agent(cfg: dict, offline: bool = False, out_dir: str | None = None) ->
                       dashboard=Dashboard(cfg["viz"]["rerun"]),
                       max_steps=cfg["max_steps"], max_replans=cfg["max_replans"],
                       planner_name=cfg["planning"]["planner"] + ("+imagine" if imagination else ""),
+                      approaches=cfg["imagination"].get("approaches", [0]),
                       world_name=cfg["world"])

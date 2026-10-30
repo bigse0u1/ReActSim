@@ -67,7 +67,7 @@ class PandaSkills:
     def _ok(res) -> bool:
         return not (isinstance(res, int) and res == -1)
 
-    def _approach(self, p: np.ndarray, grasp: str) -> tuple[np.ndarray, np.ndarray]:
+    def _approach(self, p: np.ndarray, grasp: str, approach_deg: float | None = None) -> tuple[np.ndarray, np.ndarray]:
         """Approach direction and closing hint. Non-top grasps come from the robot's side,
         pitched down; measured on ReActTabletop: 50° lifts reliably, 0° often slips."""
         if grasp == "top":
@@ -76,18 +76,21 @@ class PandaSkills:
         base = self.env.agent.robot.pose.sp.p
         h = np.array([p[0] - base[0], p[1] - base[1], 0.0])
         h /= np.linalg.norm(h)
+        if approach_deg:   # come in from another side of the object
+            c, s = np.cos(np.deg2rad(approach_deg)), np.sin(np.deg2rad(approach_deg))
+            h = np.array([c * h[0] - s * h[1], s * h[0] + c * h[1], 0.0])
         pitch = np.deg2rad(GRASP_PITCH_DEG[grasp])
         approaching = h * np.cos(pitch) + np.array([0.0, 0.0, -np.sin(pitch)])
         closing = np.cross(approaching, [0.0, 0.0, 1.0])
         return approaching, closing / np.linalg.norm(closing)
 
-    def pick(self, actor, grasp: str = "top", box=None) -> SkillResult:
+    def pick(self, actor, grasp: str = "top", box=None, approach_deg: float | None = None) -> SkillResult:
         """box: the object's box as perceived (estimate_box); None uses the simulator's geometry."""
         t0 = time.time()
         env = self.env
         obb = box if box is not None else get_actor_obb(actor)
         p = np.array(obb.primitive.transform)[:3, 3] if box is not None else actor.pose.sp.p
-        approaching, target_closing = self._approach(p, grasp)
+        approaching, target_closing = self._approach(p, grasp, approach_deg)
         info = compute_grasp_info_by_obb(obb, approaching=approaching,
                                          target_closing=target_closing, depth=FINGER_LENGTH)
         center = p + np.array([0.0, 0.0, 0.0 if grasp == "top" else SIDE_GRASP_DZ])

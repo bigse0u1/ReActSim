@@ -23,7 +23,7 @@ class ReActAgent:
     def __init__(self, world, perception: Perception, planner, *,
                  imagination: Imagination | None = None, chaos: Chaos | None = None,
                  dashboard: Dashboard | None = None, max_steps: int = 20, max_replans: int = 4,
-                 planner_name: str = "", world_name: str = ""):
+                 planner_name: str = "", world_name: str = "", approaches=(0,)):
         self.world = world
         self.perception = perception
         self.planner = planner
@@ -34,16 +34,19 @@ class ReActAgent:
         self.max_replans = max_replans
         self.planner_name = planner_name or type(planner).__name__
         self.world_name = world_name or type(world).__name__
+        self.approaches = tuple(approaches)   # sides Imagination tries for non-top grasps (deg)
 
     def _candidates(self, action: Action, alternatives: list[Action]) -> list[Action]:
         if action.type != ActionType.PICK:
             return [action]
         cands = [action] + [a for a in alternatives if a.type == ActionType.PICK]
         for g in GRASP_MODES:
-            cands.append(dataclasses.replace(action, grasp=g, rationale="grasp variant"))
+            for deg in ((0,) if g == "top" else self.approaches):
+                cands.append(dataclasses.replace(action, grasp=g, approach_deg=deg or None,
+                                                 rationale="grasp variant"))
         seen, out = set(), []
         for c in cands:
-            key = (c.type, c.target, c.grasp)
+            key = (c.type, c.target, c.grasp, c.approach_deg or 0)
             if key not in seen:
                 seen.add(key)
                 out.append(c)

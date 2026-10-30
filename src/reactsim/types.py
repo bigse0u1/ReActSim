@@ -76,10 +76,16 @@ class Action:
     reference: str | None = None    # place_on destination
     grasp: str = "top"              # one of GRASP_MODES
     rationale: str = ""
+    # Where a non-top grasp comes from: degrees around the object, 0 = from the robot's side.
+    # Chosen by Imagination, not by the planner (None means 0).
+    approach_deg: float | None = None
 
     def short(self) -> str:
         args = ", ".join(a for a in (self.target, self.reference) if a)
-        extra = f" [{self.grasp}]" if self.type == ActionType.PICK else ""
+        grasp = self.grasp
+        if self.approach_deg and self.grasp != "top":
+            grasp += f"@{self.approach_deg:+.0f}"
+        extra = f" [{grasp}]" if self.type == ActionType.PICK else ""
         return f"{self.type.value}({args}){extra}"
 
 

@@ -38,11 +38,24 @@ class _ActionLog(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
         self.log: list | None = None
+        self.captures: list[list] = []   # frame sinks for demo videos; the innermost one is filled
+        self.capture_every = 2
+        self._n = 0
 
     def step(self, action):
         if self.log is not None:
             self.log.append(np.array(action, copy=True))
-        return self.env.step(action)
+        out = self.env.step(action)
+        self._n += 1
+        if self.captures and self._n % self.capture_every == 0:
+            self.captures[-1].append(_frame(self.env))
+        return out
+
+
+def _frame(env):
+    f = env.render()
+    f = f.detach().cpu().numpy() if hasattr(f, "detach") else np.asarray(f)
+    return f[0] if f.ndim == 4 else f
 
 
 def _np(x):
@@ -159,12 +172,22 @@ class ManiSkillWorld:
         self.last_trace = (commands, result)
         return result
 
+    def push_capture(self) -> list:
+        """Start collecting rendered frames into a new list (nested: Imagination's
+        candidates go to their own list while the real run's list waits)."""
+        sink: list = []
+        self._actions.captures.append(sink)
+        return sink
+
+    def pop_capture(self) -> list:
+        return self._actions.captures.pop() if self._actions.captures else []
+
     def replay(self, trace) -> SkillResult:
         """Re-run the joint commands of an imagined execute() from the same state.
         CPU physics is deterministic, so the outcome is the one that was imagined."""
         commands, result = trace
         for a in commands:
-            self.env.step(a)
+            self._actions.step(a)
         if commands:
             self.skills.after_replay(commands)
         return result
@@ -180,7 +203,7 @@ class ManiSkillWorld:
                 box = self._perceived_box(action.target)
                 if box is None:
                     return SkillResult(False, f"cannot see {action.target} well enough to grasp it")
-            return s.pick(objs[action.target], action.grasp, box=box)
+            return s.pick(objs[action.target], action.grasp, box=box, approach_deg=action.approach_deg)
         if t == ActionType.PLACE_ON:
             ref = _np(objs[action.reference].pose.p[0])
             held = self._holding()

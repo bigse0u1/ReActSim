@@ -57,6 +57,13 @@ SCENES = {
         "plate": PLATE,
     },
 }
+# Cluttered: the kitchen objects, but the mug and the can stand right next to the banana in
+# random directions, so some approaches to it are blocked (see _place_clutter).
+SCENES["clutter"] = dict(SCENES["kitchen"])
+# Neighbour centre distance from the banana (m). Measured on 8 layouts each: at 10-12 cm the
+# robot-side grasps solve 3/8 and all approach directions 6/8; at 12-14 cm 4/8 vs 8/8; at
+# 14-16 cm 7/8 vs 7/8 (nothing is in the way). 12-14 cm: "a few things nearby".
+CLUTTER_RADIUS = (0.12, 0.14)
 OBJECTS = {name: spec for scene in SCENES.values() for name, spec in scene.items()}   # name -> spec
 # Chaos ball: a YCB baseball thrown at objects, even out of the gripper. It floats (no
 # gravity) out of view until thrown, then flies a real ballistic arc.
@@ -77,6 +84,7 @@ class ReActTabletopEnv(BaseEnv):
 
     def __init__(self, *args, robot_uids="panda", robot_init_qpos_noise=0.02, scene="kitchen", **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
+        self.scene_name = scene
         self.specs = SCENES[scene]
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
@@ -132,6 +140,22 @@ class ReActTabletopEnv(BaseEnv):
                 yaw = (torch.rand(b) * 2 - 1) * spec.yaw_range
                 q = torch.stack([torch.cos(yaw / 2), torch.zeros(b), torch.zeros(b), torch.sin(yaw / 2)], 1)
                 self.objects[name].set_pose(Pose.create_from_pq(xyz, q))
+            if self.scene_name == "clutter":
+                self._place_clutter(b)
+
+    def _place_clutter(self, b: int) -> None:
+        """Mug and can around the banana, at random bearings at least 100 deg apart."""
+        centre = self.objects["banana"].pose.p[:, :2]
+        a1 = torch.rand(b) * 2 * np.pi
+        a2 = a1 + np.deg2rad(100) + torch.rand(b) * np.deg2rad(160)
+        for name, ang in (("mug", a1), ("can", a2)):
+            r = CLUTTER_RADIUS[0] + torch.rand(b) * (CLUTTER_RADIUS[1] - CLUTTER_RADIUS[0])
+            xyz = torch.zeros((b, 3))
+            xyz[:, :2] = centre + torch.stack([torch.cos(ang), torch.sin(ang)], 1) * r[:, None]
+            xyz[:, 2] = self.specs[name].half_height
+            yaw = torch.rand(b) * 2 * np.pi
+            q = torch.stack([torch.cos(yaw / 2), torch.zeros(b), torch.zeros(b), torch.sin(yaw / 2)], 1)
+            self.objects[name].set_pose(Pose.create_from_pq(xyz, q))
 
     @property
     def default_target(self) -> str:

@@ -55,6 +55,19 @@ Pick and place on the plate with the hand (home scene, 3 seeds each, success che
 
 Getting the stock ManiSkill model to this point took several fixes, each found by measuring (details in `src/reactsim/agents/xarm_ability.py`): finger mimic joints blew up under arm motion (q2 now driven directly, 500 Hz physics); the thumb pad kept friction 0.3 because of a typo in the upstream config (`thumnb_L2`); mplib rejected every IK solution because finger hulls overlap; the planner spun joint 1 a full turn into the table; and delta-controlled fingers wound their targets up behind the object, so the hand never reopened.
 
+### 🧭 Going around: grasps from every side
+A grasp other than straight down can come from any side of the object, not only from the robot's: Imagination tries `angled` and `side` from the robot's side, its left, its right and the far side (9 candidates with `top`). Unreachable ones fail in planning almost instantly, so trying nine takes about 3-4 s.
+
+On a cluttered table (`--scene clutter`: the mug and the can stand 12-14 cm from the banana in random directions), seeds 0-19, no disturbance:
+
+| | success | recoveries per episode |
+|---|---|---|
+| B: rule-based retry (robot's side only) | 15/20 | 1.30 |
+| Muse Spark + Imagination, robot's side only | 17/20 | 0.75 |
+| **Muse Spark + Imagination, all sides** | **19/20** | **0.35** |
+
+In 5 of the 19 successes the grasp that worked came from the robot's left or right. The one failure is a top grasp that flung the banana 3.6 m (a physics glitch in contact with a neighbour). Twenty seeds do not make the differences significant (p=0.18 vs rule); the drop in recoveries is the clearer effect. The neighbour distance was chosen by measuring: at 14-16 cm nothing is in the way (robot-side grasps solve 7/8 layouts, all sides 7/8); at 12-14 cm 4/8 vs 8/8; at 10-12 cm 3/8 vs 6/8. Results in `outputs/bench_clutter`.
+
 ### 🤝 The LLM proposes, physics disposes
 Excerpt from a real run (Muse Spark `muse-spark-1.3`, ManiSkill, seed 0). The banana was knocked out of the gripper by Chaos Mode:
 
@@ -147,6 +160,7 @@ cp .env.example .env   # then put MODEL_API_KEY in .env (never in .env.example)
 python scripts/check_api.py                                    # one Muse call + SAM masks vs ground truth
 python scripts/run_demo.py --world maniskill --chaos-stdin    # sim + Muse Spark + live chaos
 python scripts/learn_from_video.py data/demos/can_side.mp4     # phone video -> robot (home scene)
+python scripts/make_demo.py --scene clutter --chaos none --seed 2   # demo video: captions + every imagined grasp side by side
 python scripts/learn_from_video.py data/demos/can_side.mp4 --robot hand   # ... with the five-finger hand
 python scripts/run_demo.py --world maniskill --scene home --robot hand --offline
 
@@ -169,7 +183,7 @@ Metrics: `task_success_rate`, `recovery_success_rate`, `mean_recovery_attempts`,
 Every episode is logged to `outputs/*/episodes.jsonl`.
 
 <!-- RESULTS: fill only from real ManiSkill runs. FakeWorld numbers are not results. -->
-**Benchmark** (ManiSkill, kitchen scene, Panda, "put the banana on the plate", oracle segmentation, real Muse Spark `muse-spark-1.3`). The disturbance hits right after the first pick.
+**Benchmark** (measured before grasps from every side were added, i.e. with Imagination's 3 robot-side candidates; ManiSkill, kitchen scene, Panda, "put the banana on the plate", oracle segmentation, real Muse Spark `muse-spark-1.3`). The disturbance hits right after the first pick.
 
 Main comparison, seeds 0-19, three objects (rule: `outputs/bench_v2`, `outputs/bench_paper`; Muse alone: `outputs/bench_v3`; ours: `outputs/bench_final`):
 
@@ -237,7 +251,9 @@ SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation:
 - [x] Second body: xArm7 + five-finger Ability hand (`--robot hand`), same agent; pick and place 9/9, human videos 3/3
 - [x] Hand: `angled` grasp (same five-finger enclose, approach pitched 50 deg): picks 8/9, but placing from a tilted hand mostly fails (Imagination rejects it unless the path from above is blocked)
 - [ ] Hand: `side` grasp (plans fail or the object slides), placing after an angled grasp, Chaos ball tuned for round objects (it throws the orange 1.3 m)
-- [ ] rerun dashboard with the imagined-outcomes view
+- [x] Demo video (`scripts/make_demo.py`): the real run with a caption log, and each Imagination step as its candidates playing side by side with what the physics returned
+- [x] Grasps from every side of the object (9 candidates); cluttered scene
+- [ ] Parallel Imagination (candidates in worker processes or GPU environments)
 - [ ] Benchmark on ManiSkill and the demo video
 
 ## What was built during the hackathon

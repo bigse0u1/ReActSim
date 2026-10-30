@@ -24,7 +24,8 @@ planning:
 
 imagination:
   enabled: true
-  max_candidates: 3
+  max_candidates: 9        # top + angled and side from each approach below
+  approaches: [0, 90, -90, 180]   # sides a non-top grasp may come from (deg around the object; 0 = robot side)
 
 chaos:
   enabled: true

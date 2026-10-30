@@ -40,8 +40,9 @@ def score(result: SkillResult, failure: FailureReport) -> float:
 
 
 class Imagination:
-    def __init__(self, world, perception: Perception, max_candidates: int = 3):
+    def __init__(self, world, perception: Perception, max_candidates: int = 3, capture: bool = False):
         self.world = world
+        self.capture = capture   # record each imagined rollout as frames (for demo videos)
         self.perception = perception
         self.max_candidates = max_candidates
 
@@ -63,6 +64,9 @@ class Imagination:
         out = []
         try:
             for a in candidates[: self.max_candidates]:
+                capture = self.capture and hasattr(self.world, "push_capture")
+                if capture:
+                    self.world.push_capture()
                 res = self.world.execute(a)
                 trace = getattr(self.world, "last_trace", None)
                 after = self._physical_state(step)
@@ -75,9 +79,11 @@ class Imagination:
                         fail = FailureReport(FailureType.CONTROLLER_ERROR, f"then {then.short()}: {res2.message}")
                     elif not self.world.is_goal_satisfied(goal):
                         fail = goal_not_met(self.world, goal, f"after {a.short()} and {then.short()}")
+                frames = self.world.pop_capture() if capture else []
                 frame = self.world.frame()
-                out.append(Imagined(a, res, fail, score(res, fail),
-                                    [frame] if frame is not None else [], trace,
+                if frame is not None:
+                    frames.append(frame)
+                out.append(Imagined(a, res, fail, score(res, fail), frames, trace,
                                     then if then_trace is not None else None, then_trace))
                 self.world.restore(snap)
         finally:

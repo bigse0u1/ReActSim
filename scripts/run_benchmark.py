@@ -29,11 +29,12 @@ CONDITIONS = {
     "knock": {"kind": "knock", "object": "target", "dx": -0.08, "dy": 0.0},
     "drop": {"kind": "drop"},
 }
-SYSTEMS = {   # name -> (planner, imagination)
-    "fixed": ("fixed", False),
-    "rule": ("rule", False),
-    "muse": ("muse", False),
-    "muse+imagine": ("muse", True),
+SYSTEMS = {   # name -> (planner, imagination, approach directions for non-top grasps or None = config)
+    "fixed": ("fixed", False, None),
+    "rule": ("rule", False, None),
+    "muse": ("muse", False, None),
+    "muse+imagine": ("muse", True, None),
+    "muse+imagine-robotside": ("muse", True, [0]),   # imagination limited to the robot's side
 }
 
 
@@ -51,7 +52,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
     ap.add_argument("--world", choices=["fake", "maniskill"])
-    ap.add_argument("--scene", choices=["kitchen", "home"])
+    ap.add_argument("--scene", choices=["kitchen", "home", "clutter"])
     ap.add_argument("--robot", choices=["panda", "hand"])
     ap.add_argument("--segmenter", choices=["oracle", "sam3"], help="perception for planning (and grasping)")
     ap.add_argument("--grasp-from", choices=["sim", "perception"], help="where the pick skill gets the object's geometry")
@@ -89,10 +90,13 @@ def main():
     table = {}
     for cond in args.conditions.split(","):
         for system in args.systems.split(","):
-            planner, imagine = SYSTEMS[system]
+            planner, imagine, approaches = SYSTEMS[system]
             cfg = copy.deepcopy(base)
             cfg["planning"]["planner"] = planner
             cfg["imagination"]["enabled"] = imagine
+            if approaches is not None:
+                cfg["imagination"]["approaches"] = approaches
+                cfg["imagination"]["max_candidates"] = 1 + 2 * len(approaches)
             cfg["chaos"]["enabled"] = CONDITIONS[cond] is not None
             cfg["chaos"]["scripted"] = [{"step": 0, "event": CONDITIONS[cond]}] if CONDITIONS[cond] else []
             out = root / cond / system
