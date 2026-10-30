@@ -283,7 +283,9 @@ class ManiSkillWorld:
             return
         if event.kind == "knock":   # physics decides whether a held object comes loose
             self._throw_ball(actor, np.array([event.dx, event.dy]))
-        else:  # teleport: someone moved it while nobody was looking
+        else:  # teleport: someone moved it while nobody was looking (out of the hand, too)
+            if self._holding() == event.object:
+                self.skills.release()
             p, q = _np(actor.pose.p[0]), _np(actor.pose.q[0])
             actor.set_pose(sapien.Pose(p=[p[0] + event.dx, p[1] + event.dy,
                                           self.u.specs[event.object].half_height], q=q))

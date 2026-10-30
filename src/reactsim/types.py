@@ -145,3 +145,5 @@ class PerturbEvent:
     dx: float = 0.0
     dy: float = 0.0
     source: str = "scripted"          # scripted | human | adversary
+    said: str = ""                    # human: the sentence it came from
+    meaning: str = ""                 # human: what Muse Spark (or the keyword parser) made of it

@@ -60,6 +60,9 @@ def _text(im: np.ndarray, lines: list[tuple[str, tuple]], x: int, y: int, scale=
         cv2.putText(im, s, (x, y + i * gap), cv2.FONT_HERSHEY_SIMPLEX, scale, col, 1, cv2.LINE_AA)
 
 
+SIDES = {"": "robot side", "+90": "right", "-90": "left", "+180": "far side"}   # approach_deg in Action.short()
+
+
 def reason(c: dict) -> str:
     """A failure in words a viewer gets at a glance."""
     d = c.get("detail", "")
@@ -85,10 +88,21 @@ def compose(human_video: str | Path, robot_video: str | Path, demo, imagined: li
                (f"human grasp: {demo.human_grasp}", red)]
     first = next((i for i in imagined if i["proposed"].startswith("pick(")), None)
     imagine = [("IMAGINED (physics, pick + place)", white)]
+    # One line per grasp mode; the approach directions it was tried from are folded into it.
+    modes: dict[str, list[tuple[str, dict]]] = {}
     for c in (first or {}).get("candidates", []):
         grasp = c["action"].split("[")[-1].rstrip("]")
-        ok = c["failure"] == "none"
-        imagine.append((f"{grasp:<7} {'works' if ok else reason(c)}", green if ok else red))
+        mode, _, deg = grasp.partition("@")
+        modes.setdefault(mode, []).append((SIDES.get(deg, deg), c))
+    for mode, tries in modes.items():
+        ok = [side for side, c in tries if c["failure"] == "none"]
+        if ok:
+            where = "" if len(tries) == 1 else ": " + ", ".join(ok)
+            imagine.append((f"{mode:<7} works{where}", green))
+        else:
+            why = {reason(c) for _, c in tries}
+            text = why.pop() if len(why) == 1 else "fails"
+            imagine.append((f"{mode:<7} {text}" + (" from every side" if len(tries) > 1 else ""), red))
     verdict = (f"robot grasp: {used_grasp}" + ("" if used_grasp == demo.human_grasp
                                                else f"  (adapted from human {demo.human_grasp})"))
     result = [(verdict, white), ("SUCCESS: on the plate" if success else "FAILED", green if success else red)]

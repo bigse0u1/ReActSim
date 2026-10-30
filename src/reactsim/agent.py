@@ -11,7 +11,7 @@ from reactsim.evaluation.metrics import EpisodeRecord
 from reactsim.imagination.rollout import Imagination
 from reactsim.perception.grounding import Perception
 from reactsim.planning.schema import PlanValidationError
-from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType, Goal
+from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType, Goal, WorldState
 from reactsim.viz.dashboard import Dashboard
 
 
@@ -164,12 +164,21 @@ class ReActAgent:
                         result = self.world.execute(action)
                     self.dash.text(step, "act", f"{action.short()} -> {result.message}")
 
-                    for ev in self.chaos.events_for_step(step, list(state.objects)):
+                    now = None
+                    if self.chaos.has_events(step):   # the world itself, not what the robot believes
+                        obs = self.world.observe()
+                        now = WorldState(obs.gt_objects, obs.gripper_holding, step)
+                    for ev in (self.chaos.events_for_step(step, now) if now is not None else []):
                         if ev.object == "target":
                             ev = dataclasses.replace(ev, object=goal.target)
+                        if ev.said:
+                            self.dash.text(step, "say", f'"{ev.said}" -> {ev.meaning or ev.kind}')
                         self.world.perturb(ev)
                         pending_replay = None   # the imagined follow-up no longer applies
                         rec.perturbations += 1
+                        rec.chaos.append({"step": step, "kind": ev.kind, "object": ev.object,
+                                          "dx": round(ev.dx, 3), "dy": round(ev.dy, 3),
+                                          "said": ev.said, "meaning": ev.meaning})
                         self.dash.text(step, "chaos", f"{ev.source}: {ev.kind} {ev.object or ''}")
 
                     obs = self.world.observe()

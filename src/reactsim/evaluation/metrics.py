@@ -17,6 +17,7 @@ class EpisodeRecord:
     initial_failure: bool = False
     recovery_attempts: int = 0
     perturbations: int = 0
+    chaos: list = field(default_factory=list)   # what happened, and for human ones what was said
     llm_calls: int = 0
     llm_latency_s: float = 0.0
     invalid_llm_outputs: int = 0

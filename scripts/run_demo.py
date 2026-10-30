@@ -47,6 +47,8 @@ def main():
         cfg["maniskill"]["scene"] = args.scene
     if args.robot:
         cfg["maniskill"]["robot"] = args.robot
+    if args.chaos_stdin:
+        cfg["chaos"]["scripted"] = []   # live: only what the audience types happens
     instruction = args.instruction or default_instruction(cfg)
     seed = cfg["seed"] if args.seed is None else args.seed
 

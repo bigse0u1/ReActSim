@@ -28,10 +28,10 @@ BG, PANEL, WHITE, GREY = (18, 20, 24), (30, 33, 40), (235, 235, 235), (150, 155,
 COLOURS = {"plan": (120, 170, 255), "replan": (120, 170, 255), "act": WHITE, "see": GREY,
            "chaos": (255, 120, 90), "failure": (255, 95, 95), "success": (110, 220, 130),
            "give_up": (255, 200, 90), "imagine": (255, 175, 70), "planner": (255, 200, 90),
-           "nudge": (255, 175, 70)}
+           "nudge": (255, 175, 70), "say": (255, 120, 90)}
 LABELS = {"plan": "PLAN", "replan": "REPLAN", "act": "ACT", "see": "SEE", "chaos": "CHAOS",
           "failure": "FAILURE", "success": "SUCCESS", "give_up": "GAVE UP", "imagine": "IMAGINE",
-          "planner": "PLANNER", "nudge": "NUDGE"}
+          "planner": "PLANNER", "nudge": "NUDGE", "say": "SPECTATOR"}
 FAILURE_WORDS = {"none": "works", "object_moved": "pushes it away", "grasp_failed": "slips",
                  "controller_error": "no path", "goal_not_met": "fails on placing", "dropped": "drops it",
                  "target_lost": "loses sight"}
@@ -187,7 +187,7 @@ class DemoRecorder(Dashboard):
                     frames += imagination(i, payload, chosen)
                 else:
                     log.append((channel, readable(channel, str(payload))))
-                    if channel in ("failure", "success", "chaos", "give_up", "plan", "replan"):
+                    if channel in ("failure", "success", "chaos", "give_up", "plan", "replan", "say"):
                         frames += [real_frame(i)] * int(1.0 * FPS)   # let the viewer read it
                 ev += 1
             frames.append(real_frame(i))
@@ -245,6 +245,9 @@ def readable(channel: str, msg: str) -> str:
         names = re.findall(r"(\w+) \(", msg) or re.findall(r"(\w+)", msg.split("|")[0])
         lost = msg.split("not found:")[1].strip() if "not found:" in msg else ""
         return "sees " + ", ".join(names) + (f"; cannot see {lost}" if lost else "")
+    if channel == "say":   # '"sentence" -> what Muse Spark made of it'
+        said, _, meaning = msg.partition(" -> ")
+        return f"{said}  =>  Muse Spark: {meaning}"
     if channel == "chaos":
         m = re.search(r"(knock|drop|teleport)\s*(\w*)", msg)
         if m:

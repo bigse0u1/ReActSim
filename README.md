@@ -26,6 +26,21 @@ Before committing to a risky skill (for example choosing between a `top`, `angle
 ### 😈 Chaos Mode: the world fights back
 Anyone can type during a run: *"knock the banana off"*, *"make it drop it"*. Muse Spark turns the text into a bounded physical perturbation. A knock is a real projectile: a YCB baseball is thrown on a ballistic arc at the end of the banana, even while the robot is holding it, and the physics decides whether it twists out of the gripper (at ~6 m/s it did in 4/4 seeds). The robot is not told that anything happened; it has to notice from perception and physics. Scripted chaos makes the benchmarks reproducible.
 
+Muse Spark sees where every movable object is and what the robot holds, so it can resolve "it", "the cup" or a sentence in Korean, and pick a direction. Its answer is checked before anything happens: only movable objects (never the plate), a teleport stays on the workspace and within 25 cm, "drop" needs something in the hand, and a sentence that moves nothing ("do a little dance") is ignored; if Muse Spark's answer fails these checks, a keyword parser takes over. Real Muse Spark readings:
+
+| spectator | Muse Spark |
+|---|---|
+| "knock it out of the robot's hand" | knock banana: *Baseball knocks banana out of gripper* |
+| "slide the can far to the left" | teleport can, dy = +0.25 m |
+| "hide the banana behind the mug" | teleport banana, (-0.10, -0.08) m |
+| "바나나를 로봇 손에서 쳐내" | knock banana: *Baseball knocks banana from gripper* |
+| "컵을 오른쪽으로 옮겨" ("move the cup to the right") | teleport mug, dy = -0.15 m |
+
+```bash
+python scripts/run_demo.py --world maniskill --chaos-stdin             # type during the run
+python scripts/make_demo.py --chaos none --seed 1 --say "knock the banana out of the robot's hand"   # as a video
+```
+
 ### 🔍 Failure diagnosis it can explain
 Each skill states what should happen. The diagnoser compares that expectation with the observed state and produces a typed `FailureReport` with evidence. Muse Spark receives the report and must address the cause, not blindly repeat the action. When every step "worked" but the success check still fails, the report lists each physics condition with its measured value (e.g. `over_reference (value_cm=20.0)`), and a failure that repeats after the same action is flagged so the planner changes strategy; on the third repeat the agent stops and says why instead of looping.
 
@@ -96,7 +111,7 @@ Can / knock, seeds 0-19, real Muse Spark, 9 candidates (`outputs/bench_c1/can`):
 | B: rule-based retry, with stand-up | 16/20 | 1.8 |
 | **Muse Spark + Imagination, with stand-up** | **19/20** | **1.2** |
 
-Standing up is a skill, so it helps the rule baseline too; the remaining gap is not significant (p=0.17). The rule's four failures are "no path" three times in a row or the replan budget; ours is a can thrown 69 cm to the edge of the workspace, out of reach (Muse Spark gave up after two tries and said so). The baseball got stronger after the main benchmark (it now frees a held banana every time), which is why "before" is lower than the 5/20 in the table below.
+Standing up is a skill, so it helps the rule baseline too; the remaining gap is not significant (p=0.34, two-sided Fisher exact). The rule's four failures are "no path" three times in a row or the replan budget; ours is a can thrown 69 cm to the edge of the workspace, out of reach (Muse Spark gave up after two tries and said so). The baseball got stronger after the main benchmark (it now frees a held banana every time), which is why "before" is lower than the 5/20 in the table below.
 
 ### 🤝 The LLM proposes, physics disposes
 Excerpt from a real run (Muse Spark `muse-spark-1.3`, ManiSkill, seed 0). The banana was knocked out of the gripper by Chaos Mode:
@@ -214,9 +229,22 @@ Metrics: `task_success_rate`, `recovery_success_rate`, `mean_recovery_attempts`,
 Every episode is logged to `outputs/*/episodes.jsonl`.
 
 <!-- RESULTS: fill only from real ManiSkill runs. FakeWorld numbers are not results. -->
-**Benchmark** (measured before grasps from every side were added, i.e. with Imagination's 3 robot-side candidates; ManiSkill, kitchen scene, Panda, "put the banana on the plate", oracle segmentation, real Muse Spark `muse-spark-1.3`). The disturbance hits right after the first pick.
+**Main benchmark, current defaults** (9 candidates from every side, the current baseball, stand-up place; ManiSkill, Panda, oracle segmentation, real Muse Spark `muse-spark-1.3`, seeds 0-19; banana and can in the kitchen scene, orange in the home scene). The disturbance hits right after the first pick. `outputs/bench_d1`, can / knock from `outputs/bench_c1/can`:
 
-Main comparison, seeds 0-19, three objects (rule: `outputs/bench_v2`, `outputs/bench_paper`; Muse alone: `outputs/bench_v3`; ours: `outputs/bench_final`):
+| Task / disturbance | B: rule-based retry | Muse Spark, no Imagination | **Muse Spark + Imagination** |
+|---|---|---|---|
+| banana / knock | 18/20 | 18/20 | **19/20** |
+| banana / drop | 13/20 | 17/20 | **20/20** |
+| can / knock | 16/20 | - | **19/20** |
+| can / drop | 20/20 | - | 20/20 |
+| orange / knock | 18/20 | - | **19/20** |
+| orange / drop | 20/20 | - | 19/20 |
+| total | 105/120 | | **116/120** |
+| recoveries per episode, banana (knock / drop) | 1.2 / 2.5 | 2.3 / 2.9 | **0.8 / 1.0** |
+
+Banana / drop is again the significant cell (20/20 vs 13/20, p=0.008; vs Muse alone p=0.23); over all six cells 116/120 vs 105/120 (p=0.015; two-sided Fisher exact, as everywhere here). Against Muse alone, Imagination halves recovery attempts and Muse calls (banana: 3.3 / 3.9 calls to 1.9 / 2.0). Our four failures: a banana pushed against the can where no grasp and no push works (Muse Spark says so and stops), a can thrown out of reach, and one orange each under knock and drop.
+
+The same benchmark measured earlier, with Imagination's 3 robot-side candidates, a weaker baseball and no stand-up place (rule: `outputs/bench_v2`, `outputs/bench_paper`; Muse alone: `outputs/bench_v3`; ours: `outputs/bench_final`):
 
 | Task / disturbance | B: rule-based retry | Muse Spark, no Imagination | **Muse Spark + Imagination** |
 |---|---|---|---|
