@@ -55,6 +55,21 @@ Pick and place on the plate with the hand (home scene, 3 seeds each, success che
 
 Getting the stock ManiSkill model to this point took several fixes, each found by measuring (details in `src/reactsim/agents/xarm_ability.py`): finger mimic joints blew up under arm motion (q2 now driven directly, 500 Hz physics); the thumb pad kept friction 0.3 because of a typo in the upstream config (`thumnb_L2`); mplib rejected every IK solution because finger hulls overlap; the planner spun joint 1 a full turn into the table; and delta-controlled fingers wound their targets up behind the object, so the hand never reopened.
 
+### 🧺 Several steps: "Put the fruit on the plate and the can in the bowl"
+An instruction can ask for several things. Muse Spark turns it into goals (here: banana on plate, orange on plate, can in bowl), grounding words like "the fruit" itself ("Grounded 'the fruit' to both banana and orange"), and orders the work. The task is done only when every goal holds at once; each pick is pre-validated against the goal it serves; a full container gets the next object on its free side; and if a goal that already held comes undone (someone takes the banana back off the plate) the agent notices at that step and fixes it before moving on.
+
+`--scene tidy` (banana, orange, can, a plate and a bowl), three goals, seeds 0-9 (`outputs/bench_tidy`; both systems get the explicit instruction "Put the banana and the orange on the plate, and the can in the bowl", since the rule baseline cannot read "the fruit"):
+
+| Condition | B: rule-based retry | **Muse Spark + Imagination** |
+|---|---|---|
+| normal | 8/10 | **10/10** |
+| knock (ball hits the first object) | 5/10 | **9/10** |
+| undo (banana taken off the plate after the second place) | 5/10 | **9/10** |
+| total | 18/30 | **28/30** (p=0.005) |
+| recoveries per episode | 1.6 / 2.5 / 2.7 | **0.6 / 1.1 / 1.6** |
+
+The gap is much wider than for one object: small failure rates compound over three goals for the retry loop, while pre-validation keeps each step clean. Our only failure in both disturbed conditions is the same layout (seed 5).
+
 ### 🧭 Going around: grasps from every side
 A grasp other than straight down can come from any side of the object, not only from the robot's: Imagination tries `angled` and `side` from the robot's side, its left, its right and the far side (9 candidates with `top`). Unreachable ones fail in planning almost instantly, so trying nine takes about 3-4 s.
 
@@ -161,6 +176,7 @@ python scripts/check_api.py                                    # one Muse call +
 python scripts/run_demo.py --world maniskill --chaos-stdin    # sim + Muse Spark + live chaos
 python scripts/learn_from_video.py data/demos/can_side.mp4     # phone video -> robot (home scene)
 python scripts/make_demo.py --scene clutter --chaos none --seed 2   # demo video: captions + every imagined grasp side by side
+python scripts/make_demo.py --scene tidy --chaos undo --instruction "Put the fruit on the plate and the can in the bowl"
 python scripts/learn_from_video.py data/demos/can_side.mp4 --robot hand   # ... with the five-finger hand
 python scripts/run_demo.py --world maniskill --scene home --robot hand --offline
 
@@ -253,6 +269,7 @@ SAM 3.1 on the simulator camera (seed 0), IoU against ground-truth segmentation:
 - [ ] Hand: `side` grasp (plans fail or the object slides), placing after an angled grasp, Chaos ball tuned for round objects (it throws the orange 1.3 m)
 - [x] Demo video (`scripts/make_demo.py`): the real run with a caption log, and each Imagination step as its candidates playing side by side with what the physics returned
 - [x] Grasps from every side of the object (9 candidates); cluttered scene
+- [x] Several-goal tasks (`--scene tidy`, plate and bowl): language grounding, free spots on a container, undone goals noticed at once; 28/30 vs 18/30
 - [ ] Parallel Imagination (candidates in worker processes or GPU environments)
 - [ ] Benchmark on ManiSkill and the demo video
 

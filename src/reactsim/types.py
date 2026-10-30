@@ -57,6 +57,7 @@ class WorldState:
 
 
 GRASP_MODES = ("top", "angled", "side")   # straight down / 50° from the robot side / horizontal
+CONTAINER_KINDS = ("plate", "bowl")       # things objects are put on or in; never picked
 
 
 class ActionType(str, Enum):
@@ -98,9 +99,13 @@ class Goal:
 
 @dataclass
 class Plan:
-    goal: Goal
+    goals: list[Goal]        # every placement the instruction asks for; done when all hold
     actions: list[Action]
     rationale: str = ""
+
+    @property
+    def goal(self) -> Goal:
+        return self.goals[0]
 
 
 @dataclass

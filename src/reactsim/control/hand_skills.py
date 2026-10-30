@@ -21,7 +21,7 @@ import sapien
 from transforms3d.quaternions import mat2quat
 
 from reactsim.agents.xarm_ability import BASE_X, MIMIC_B, MIMIC_K, build_assets
-from reactsim.types import SkillResult
+from reactsim.types import CONTAINER_KINDS, SkillResult
 
 try:  # module path moved between ManiSkill releases
     from mani_skill.examples.motionplanning.panda.utils import get_actor_obb
@@ -150,7 +150,7 @@ class HandSkills:
     def _set_obstacles(self, skip: set[str]) -> None:
         pts = []
         for name, a in self.env.objects.items():
-            if name in skip:
+            if name in skip or self.env.specs[name].kind in CONTAINER_KINDS:   # things are put into these
                 continue
             obb = get_actor_obb(a)
             T = np.array(obb.primitive.transform)

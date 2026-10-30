@@ -111,3 +111,15 @@ def test_no_working_grasp_is_reported_not_attempted():
     assert rec.stop_reason == f"gave up: no_working_grasp repeated {MAX_NO_WORKING_GRASP} times"
     assert FarWorld.executed == []                     # never tried a pick it knew would fail
     assert "no grasp works on banana" in rec.steps[0]["detail"]
+
+
+def test_several_goals_all_have_to_hold():
+    cfg = copy.deepcopy(CFG)
+    cfg["world"] = "fake"
+    cfg["planning"]["planner"] = "muse"
+    cfg["chaos"]["enabled"] = False
+    agent = build_agent(cfg, offline=True)
+    rec = agent.run("Put the banana and the can on the plate", seed=0)
+    assert rec.success
+    assert rec.goals == ["banana on plate", "can on plate"]
+    assert sum(s["action"].startswith("place_on") and s["failure"] == "none" for s in rec.steps) == 2

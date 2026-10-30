@@ -6,13 +6,17 @@ import dataclasses
 import time
 
 from reactsim.chaos.perturb import Chaos
-from reactsim.evaluation.diagnosis import diagnose, goal_not_met
+from reactsim.evaluation.diagnosis import diagnose, goals_not_met
 from reactsim.evaluation.metrics import EpisodeRecord
 from reactsim.imagination.rollout import Imagination
 from reactsim.perception.grounding import Perception
 from reactsim.planning.schema import PlanValidationError
-from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType
+from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType, Goal
 from reactsim.viz.dashboard import Dashboard
+
+
+def _goal_str(g: Goal) -> str:
+    return f"{g.target} {g.relation} {g.reference}"
 
 
 MAX_SAME_FAILURE = 3   # stop after the same failure follows the same action this many times
@@ -52,7 +56,10 @@ class ReActAgent:
                 out.append(c)
         return out
 
-    def run(self, instruction: str, seed: int) -> EpisodeRecord:
+    def run(self, instruction: str, seed: int, goals: list[Goal] | None = None) -> EpisodeRecord:
+        """goals: the task's own goals, when known (benchmarks). Success is judged on them, and
+        the goals the planner read from the instruction are recorded next to them. Without
+        them the planner's goals define the task."""
         rec = EpisodeRecord(seed, self.planner_name, self.world_name, instruction)
         t_start = time.time()
         self._calls_before = len(self._llm_calls())
@@ -65,22 +72,37 @@ class ReActAgent:
         except PlanValidationError as e:
             self.dash.text(step, "planner", f"no valid plan: {e}")
             return self._finish(rec, t_start)
-        goal, queue = plan.goal, list(plan.actions)
+        goals = list(goals or plan.goals)
+        rec.goals = [_goal_str(g) for g in goals]
+        rec.planned_goals = [_goal_str(g) for g in plan.goals]
+        queue = list(plan.actions)
         self.dash.text(step, "plan", f"{[a.short() for a in queue]} — {plan.rationale}")
 
+        def unmet():
+            return [g for g in goals if not self.world.is_goal_satisfied(g)]
+
+        def focus(action):
+            """The goal the current action works toward: the one for the object it picks (or
+            the object in hand), else the first one still open."""
+            name = action.target if action.type == ActionType.PICK else state.holding
+            return next((g for g in goals if g.target == name), (unmet() or goals)[0])
+
         replans = 0
+        held_before: list[Goal] = []   # goals that held after the previous step
         pending_replay = None   # (follow-up action, its imagined trace)
         repeats: dict[tuple, int] = {}
         last_action = None
         while step < self.max_steps:
-            if self.world.is_goal_satisfied(goal):
+            open_goals = unmet()
+            held_before = [g for g in goals if g not in open_goals]
+            if not open_goals:
                 rec.success = True
-                self.dash.text(step, "success", f"{goal.target} {goal.relation} {goal.reference}")
+                self.dash.text(step, "success", "; ".join(_goal_str(g) for g in goals))
                 break
 
             failure = None
             if not queue:
-                failure = goal_not_met(self.world, goal, "plan finished but the success check fails")
+                failure = goals_not_met(self.world, open_goals, "plan finished but the success check fails")
             else:
                 action = queue.pop(0)
                 if action.type == ActionType.GIVE_UP:
@@ -88,9 +110,10 @@ class ReActAgent:
                     self.dash.text(step, "give_up", action.rationale or plan.rationale)
                     break
                 if action.type == ActionType.DONE:
-                    failure = goal_not_met(self.world, goal, "planner said done but the success check fails")
+                    failure = goals_not_met(self.world, open_goals, "planner said done but the success check fails")
                 else:
                     chosen, imagined = None, []
+                    goal = focus(action)
                     if self.imagination is not None:
                         cands = self._candidates(action, alternatives)
                         if len(cands) > 1:
@@ -150,6 +173,12 @@ class ReActAgent:
                     self.dash.observation(step + 1, obs, self.perception.last_masks)
                     self.dash.objects(step + 1, after)
                     failure = diagnose(action, result, state, after, goal.target)
+                    undone = [g for g in held_before if not self.world.is_goal_satisfied(g)]
+                    if not failure.is_failure and undone:
+                        # Something already done came undone (e.g. someone took it back off the
+                        # plate): notice now, not when the rest of the plan runs out.
+                        failure = goals_not_met(self.world, undone, "; ".join(_goal_str(g) for g in undone)
+                                                + " held before and no longer does (something moved it)")
                     rec.steps.append({"step": step, "action": action.short(), "ok": result.ok,
                                       "failure": failure.type.value, "detail": failure.detail})
                     state = after
@@ -178,7 +207,9 @@ class ReActAgent:
                 rec.recovery_attempts = replans
                 state = self._look(step)   # look again before deciding how to recover
                 try:
-                    plan, alternatives = self.planner.replan(instruction, goal, state, rec.steps, failure)
+                    achieved = [g for g in goals if g not in unmet()]
+                    plan, alternatives = self.planner.replan(instruction, unmet() or goals, state, rec.steps,
+                                                             failure, achieved)
                 except PlanValidationError as e:
                     self.dash.text(step, "planner", f"no valid recovery: {e}")
                     break

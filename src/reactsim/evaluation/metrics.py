@@ -22,6 +22,8 @@ class EpisodeRecord:
     invalid_llm_outputs: int = 0
     wall_time_s: float = 0.0
     stop_reason: str = ""
+    goals: list[str] = field(default_factory=list)          # the task's goals (success is judged on these)
+    planned_goals: list[str] = field(default_factory=list)  # what the planner read from the instruction
     steps: list[dict] = field(default_factory=list)
     imagined: list[dict] = field(default_factory=list)   # what Imagination tried before each choice
 

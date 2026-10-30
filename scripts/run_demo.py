@@ -24,7 +24,7 @@ def main():
     ap.add_argument("--world", choices=["fake", "maniskill"])
     ap.add_argument("--planner", choices=["muse", "rule", "fixed"])
     ap.add_argument("--segmenter", choices=["oracle", "sam3"])
-    ap.add_argument("--scene", choices=["kitchen", "home", "clutter"])
+    ap.add_argument("--scene", choices=["kitchen", "home", "clutter", "tidy"])
     ap.add_argument("--robot", choices=["panda", "hand"], help="panda (two fingers) or hand (xArm7 + five fingers)")
     ap.add_argument("--seed", type=int)
     ap.add_argument("--offline", action="store_true", help="use the mock Muse client (no API calls)")

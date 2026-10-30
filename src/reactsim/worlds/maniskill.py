@@ -9,9 +9,10 @@ import reactsim.envs.tabletop  # noqa: F401  (registers ReActTabletop-v1)
 from reactsim.agents import xarm_ability
 from reactsim.control.skills import PandaSkills
 from reactsim.envs.tabletop import (
-    CHAOS_BALL_PARK, CHAOS_BALL_RADIUS, ON_PLATE_LIFT, PLATE_RADIUS, PLATE_TOP,
+    CHAOS_BALL_PARK, CHAOS_BALL_RADIUS, ON_PLATE_LIFT, PLATE_RADIUS,
 )
 from reactsim.types import (
+    CONTAINER_KINDS,
     Action,
     ActionType,
     Goal,
@@ -114,7 +115,7 @@ class ManiSkillWorld:
 
     def _holding(self) -> str | None:
         for name, actor in self.u.objects.items():
-            if name != "plate" and bool(self.u.agent.is_grasping(actor)[0]):
+            if self.u.specs[name].kind not in CONTAINER_KINDS and bool(self.u.agent.is_grasping(actor)[0]):
                 return name
         return None
 
@@ -154,6 +155,19 @@ class ManiSkillWorld:
             pts = mask_points(m.mask, obs.depth, obs.intrinsic, obs.extrinsic) if m is not None else None
             self._box_cache[key] = estimate_box(pts) if pts is not None and len(pts) else None
         return self._box_cache[key]
+
+    def _free_spot(self, reference: str, held: str) -> np.ndarray:
+        """Where on/in the container to put the held object: its centre, or if things already
+        sit there, the spot on a ring at half the radius farthest from them."""
+        c = _np(self.u.objects[reference].pose.p[0])[:2]
+        r = self.u.specs[reference].radius or PLATE_RADIUS
+        others = [_np(a.pose.p[0])[:2] for n, a in self.u.objects.items()
+                  if n not in (reference, held) and self.u.specs[n].kind not in CONTAINER_KINDS
+                  and np.linalg.norm(_np(a.pose.p[0])[:2] - c) < r + 0.02]
+        if not others:
+            return c
+        ring = [c + 0.5 * r * np.array([np.cos(a), np.sin(a)]) for a in np.linspace(0, 2 * np.pi, 8, endpoint=False)]
+        return max([c] + ring, key=lambda p: min(np.linalg.norm(p - o) for o in others))
 
     def segmentation_ids(self) -> dict[str, int]:
         """Actor name -> segmentation id, for the oracle segmenter."""
@@ -205,18 +219,16 @@ class ManiSkillWorld:
                     return SkillResult(False, f"cannot see {action.target} well enough to grasp it")
             return s.pick(objs[action.target], action.grasp, box=box, approach_deg=action.approach_deg)
         if t == ActionType.PLACE_ON:
-            ref = _np(objs[action.reference].pose.p[0])
             held = self._holding()
             if held is None:
                 return SkillResult(False, "nothing in gripper")
-            # Keep the object's current hang below the gripper; lower until its bottom clears the plate.
-            hang = 0.0
-            if held is not None:
-                tcp_z = float(self.u.agent.tcp.pose.p[0, 2])
-                bottom = float(objs[held].pose.p[0, 2]) - self.u.specs[held].half_height
-                hang = tcp_z - bottom
-            release_z = PLATE_TOP + PLACE_CLEARANCE + hang
-            return s.place_on(np.array([ref[0], ref[1], release_z]), drop_height=0.0)
+            spot = self._free_spot(action.reference, held)
+            # Keep the object's current hang below the gripper; lower until its bottom clears the rim.
+            tcp_z = float(self.u.agent.tcp.pose.p[0, 2])
+            bottom = float(objs[held].pose.p[0, 2]) - self.u.specs[held].half_height
+            rim = 2 * self.u.specs[action.reference].half_height
+            release_z = rim + PLACE_CLEARANCE + (tcp_z - bottom)
+            return s.place_on(np.array([spot[0], spot[1], release_z]), drop_height=0.0)
         if t == ActionType.PUSH_ASIDE:
             return s.push_aside(objs[action.target])
         if t == ActionType.HOME:
@@ -296,13 +308,14 @@ class ManiSkillWorld:
             return {"objects_exist": {"ok": False, "value": [goal.target, goal.reference]}}
         po, pr = _np(obj.pose.p[0]), _np(ref.pose.p[0])
         dist = float(np.linalg.norm(po[:2] - pr[:2]))
-        # Not "above the rim": the plate is concave, so a banana lying in it sits below rim height.
+        # Not "above the rim": containers are concave, so a banana lying in one sits below rim height.
         min_z = self.u.specs[goal.target].half_height + ON_PLATE_LIFT
+        radius = self.u.specs[goal.reference].radius or PLATE_RADIUS
         speed = float(np.linalg.norm(_np(obj.linear_velocity[0])))
         report = {
             "released": {"ok": self._holding() != goal.target, "value": self._holding()},
-            "over_reference": {"ok": dist < PLATE_RADIUS * 0.8, "value_cm": round(dist * 100, 1),
-                               "need_below_cm": round(PLATE_RADIUS * 80, 1)},
+            "over_reference": {"ok": dist < radius * 0.8, "value_cm": round(dist * 100, 1),
+                               "need_below_cm": round(radius * 80, 1)},
             "above_table": {"ok": float(po[2]) > min_z, "value_cm": round(float(po[2]) * 100, 1),
                             "need_above_cm": round(min_z * 100, 1)},
             "at_rest": {"ok": speed < 0.05, "value_m_s": round(speed, 3)},

@@ -28,6 +28,9 @@ CONDITIONS = {
     "normal": None,
     "knock": {"kind": "knock", "object": "target", "dx": -0.08, "dy": 0.0},
     "drop": {"kind": "drop"},
+    # Several-goal tasks: after the second place (step 3), someone takes the banana off the plate
+    # again, so a goal that already held is broken while the robot works on the next one.
+    "undo": (3, {"kind": "teleport", "object": "banana", "dx": 0.0, "dy": -0.25}),
 }
 SYSTEMS = {   # name -> (planner, imagination, approach directions for non-top grasps or None = config)
     "fixed": ("fixed", False, None),
@@ -38,9 +41,9 @@ SYSTEMS = {   # name -> (planner, imagination, approach directions for non-top g
 }
 
 
-def run_one(agent, instruction, seed, cond, system) -> EpisodeRecord:
+def run_one(agent, instruction, seed, cond, system, goals=None) -> EpisodeRecord:
     try:
-        return agent.run(instruction, seed)
+        return agent.run(instruction, seed, goals)
     except Exception as e:   # an API or planner error ends this episode, not the benchmark
         rec = EpisodeRecord(seed, system, cond, instruction)
         rec.stop_reason = f"error: {type(e).__name__}: {e}"[:300]
@@ -52,16 +55,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
     ap.add_argument("--world", choices=["fake", "maniskill"])
-    ap.add_argument("--scene", choices=["kitchen", "home", "clutter"])
+    ap.add_argument("--scene", choices=["kitchen", "home", "clutter", "tidy"])
     ap.add_argument("--robot", choices=["panda", "hand"])
     ap.add_argument("--segmenter", choices=["oracle", "sam3"], help="perception for planning (and grasping)")
     ap.add_argument("--grasp-from", choices=["sim", "perception"], help="where the pick skill gets the object's geometry")
     ap.add_argument("--clear-view", choices=["on", "off"], help="move the arm out of view before each pick (default: on with perception)")
     ap.add_argument("--seeds", type=int, default=10)
     ap.add_argument("--systems", default=",".join(SYSTEMS))
-    ap.add_argument("--conditions", default=",".join(CONDITIONS))
+    ap.add_argument("--conditions", default="normal,knock,drop", help=f"any of {list(CONDITIONS)}")
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--instruction", default=None, help="default: put the scene's first object on the plate")
+    ap.add_argument("--goals", default=None,
+                    help='the task\'s goals, judged for success, e.g. "banana on plate; can in bowl" '
+                         "(default: whatever the planner reads from the instruction)")
     ap.add_argument("--out", default=None, help="resume into an existing bench_* directory")
     args = ap.parse_args()
 
@@ -85,6 +91,10 @@ def main():
         base["perception"]["clear_view"] = args.clear_view == "on"
     base["maniskill"]["record_video"] = False
     instruction = args.instruction or default_instruction(base)
+    goals = None
+    if args.goals:
+        from reactsim.types import Goal
+        goals = [Goal(*g.split()) for g in args.goals.split(";")]
     root = Path(args.out) if args.out else Path("outputs") / time.strftime("bench_%Y%m%d_%H%M%S")
 
     table = {}
@@ -97,8 +107,10 @@ def main():
             if approaches is not None:
                 cfg["imagination"]["approaches"] = approaches
                 cfg["imagination"]["max_candidates"] = 1 + 2 * len(approaches)
-            cfg["chaos"]["enabled"] = CONDITIONS[cond] is not None
-            cfg["chaos"]["scripted"] = [{"step": 0, "event": CONDITIONS[cond]}] if CONDITIONS[cond] else []
+            event = CONDITIONS[cond]
+            step, event = event if isinstance(event, tuple) else (0, event)
+            cfg["chaos"]["enabled"] = event is not None
+            cfg["chaos"]["scripted"] = [{"step": step, "event": event}] if event else []
             out = root / cond / system
             out.mkdir(parents=True, exist_ok=True)
             log = out / "episodes.jsonl"
@@ -110,7 +122,7 @@ def main():
                 try:
                     for s in todo:
                         t0 = time.time()
-                        rec = run_one(agent, instruction, s, cond, system)
+                        rec = run_one(agent, instruction, s, cond, system, goals)
                         rec.planner = system
                         done[s] = rec
                         with log.open("a") as f:

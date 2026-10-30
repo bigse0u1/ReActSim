@@ -10,13 +10,13 @@ import json
 import re
 from typing import Any
 
-from reactsim.types import GRASP_MODES, Action, ActionType, Goal, Plan, WorldState
+from reactsim.types import CONTAINER_KINDS, GRASP_MODES, Action, ActionType, Goal, Plan, WorldState
 
 ACTION_SPEC = """\
 Allowed actions (JSON objects):
   {"type": "pick", "target": <object>, "grasp": "top" | "angled" | "side"}
       # top: straight down. angled: 50° from the robot's side. side: horizontal.
-  {"type": "place_on", "reference": <object>}          # places what is held
+  {"type": "place_on", "reference": <object>}          # puts what is held on/in a container
   {"type": "push_aside", "target": <object>}           # clear an obstacle
   {"type": "reobserve"}                                # look again before acting
   {"type": "home"}
@@ -24,7 +24,8 @@ Allowed actions (JSON objects):
   {"type": "give_up"}
 Respond with ONLY a JSON object:
 {
-  "goal": {"target": <object>, "relation": "on", "reference": <object>},
+  "goals": [{"target": <object>, "relation": "on" | "in", "reference": <container>}, ...],
+      # one entry per object the instruction wants moved; the task is done when all hold
   "rationale": <one or two sentences>,
   "actions": [<action>, ...],
   "alternatives": [<action>, ...]   # optional: other options for the FIRST action
@@ -68,8 +69,8 @@ def validate_actions(actions: list[Action], state: WorldState) -> None:
         if a.type == ActionType.PICK:
             if a.target is None:
                 raise PlanValidationError(f"action {i}: pick needs a target")
-            if state.objects[a.target].kind == "plate":
-                raise PlanValidationError(f"action {i}: cannot pick the plate")
+            if state.objects[a.target].kind in CONTAINER_KINDS:
+                raise PlanValidationError(f"action {i}: cannot pick the {a.target} (a container)")
             if holding is not None:
                 raise PlanValidationError(f"action {i}: pick while holding {holding}")
             holding = a.target
@@ -83,15 +84,31 @@ def validate_actions(actions: list[Action], state: WorldState) -> None:
             raise PlanValidationError(f"action {i}: push_aside needs a target")
 
 
+def parse_goals(d: dict[str, Any], state: WorldState) -> list[Goal]:
+    raw = d.get("goals")
+    if raw is None and "goal" in d:          # a single goal is accepted too
+        raw = [d["goal"]]
+    if not raw:
+        raise PlanValidationError("missing goals")
+    goals = []
+    try:
+        for g in raw:
+            goals.append(Goal(g["target"], g.get("relation", "on"), g["reference"]))
+    except (KeyError, TypeError) as e:
+        raise PlanValidationError(f"malformed goal: {e}") from e
+    for goal in goals:
+        if goal.target not in state.objects or goal.reference not in state.objects:
+            raise PlanValidationError(f"goal names unknown objects: {goal}")
+        if state.objects[goal.reference].kind not in CONTAINER_KINDS:
+            raise PlanValidationError(f"{goal.reference} is not a container (plate or bowl)")
+    if len({g.target for g in goals}) < len(goals):
+        raise PlanValidationError("an object appears in two goals")
+    return goals
+
+
 def parse_plan(text: str, state: WorldState) -> tuple[Plan, list[Action]]:
     d = extract_json(text)
-    try:
-        g = d["goal"]
-        goal = Goal(g["target"], g.get("relation", "on"), g["reference"])
-    except (KeyError, TypeError) as e:
-        raise PlanValidationError(f"missing goal: {e}") from e
-    if goal.target not in state.objects or goal.reference not in state.objects:
-        raise PlanValidationError(f"goal names unknown objects: {goal}")
+    goals = parse_goals(d, state)
     actions = [parse_action(a) for a in d.get("actions", [])]
     if not actions:
         raise PlanValidationError("empty plan")
@@ -104,4 +121,4 @@ def parse_plan(text: str, state: WorldState) -> tuple[Plan, list[Action]]:
             alternatives.append(alt)
         except PlanValidationError:
             continue   # a bad alternative is dropped, not fatal
-    return Plan(goal, actions, d.get("rationale", "")), alternatives
+    return Plan(goals, actions, d.get("rationale", "")), alternatives

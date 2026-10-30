@@ -6,10 +6,13 @@ import json
 from typing import Protocol
 
 from reactsim.planning.schema import ACTION_SPEC, PlanValidationError, parse_plan
-from reactsim.types import GRASP_MODES, Action, ActionType, FailureReport, FailureType, Goal, Plan, WorldState
+from reactsim.types import CONTAINER_KINDS, GRASP_MODES, Action, ActionType, FailureReport, FailureType, Goal, Plan, WorldState
 
 SYSTEM_PROMPT = f"""\
-You are the high-level planner of a Franka Panda robot on a tabletop.
+You are the high-level planner of a robot arm on a tabletop.
+An instruction may ask for several objects to be moved: list every one as a goal, decide a
+sensible order, and plan all the picks and places. Ground words like "the fruit" to the
+objects in the world state that fit them.
 You never control joints; you choose skills from a fixed list. Low-level motion
 planning, grasping and the success check are done by the system.
 When a failure report is given, explain the likely physical cause in the
@@ -29,8 +32,11 @@ class Planner(Protocol):
     def plan(self, instruction: str, state: WorldState,
              history: list[dict]) -> tuple[Plan, list[Action]]: ...
 
-    def replan(self, instruction: str, goal: Goal, state: WorldState,
-               history: list[dict], failure: FailureReport) -> tuple[Plan, list[Action]]: ...
+    def replan(self, instruction: str, goals: list[Goal], state: WorldState,
+               history: list[dict], failure: FailureReport,
+               achieved: list[Goal] = ()) -> tuple[Plan, list[Action]]:
+        """goals: the ones still to do; achieved: the ones that already hold."""
+        ...
 
 
 class MusePlanner:
@@ -56,35 +62,57 @@ class MusePlanner:
                 f"World state: {json.dumps(state.to_prompt_dict())}")
         return self._ask(user, state)
 
-    def replan(self, instruction, goal, state, history, failure):
+    def replan(self, instruction, goals, state, history, failure, achieved=()):
         user = (f"Instruction: {instruction}\n"
-                f"Goal: {goal.target} {goal.relation} {goal.reference}\n"
+                f"Goals still to do: {_goals_text(goals)}\n"
+                f"Goals already achieved (do not undo them): {_goals_text(achieved) or 'none'}\n"
                 f"Executed so far: {json.dumps(history[-6:])}\n"
                 f"FAILURE: {failure.type.value} — {failure.detail}\n"
                 f"Evidence: {json.dumps(failure.evidence, default=float)}\n"
                 f"Current world state: {json.dumps(state.to_prompt_dict())}\n"
-                "Produce a recovery plan from the current state.")
+                "Produce a recovery plan from the current state. List only the goals still to do.")
         return self._ask(user, state)
 
 
-def _parse_goal_keywords(instruction: str, state: WorldState) -> Goal:
-    """Baseline goal parsing: first non-plate object named in the instruction; plate as reference."""
+def _goals_text(goals) -> str:
+    return "; ".join(f"{g.target} {g.relation} {g.reference}" for g in goals)
+
+
+def _parse_goal_keywords(instruction: str, state: WorldState) -> list[Goal]:
+    """Baseline goal parsing: every object named in the instruction (by name or kind), in the
+    order mentioned, goes on/in the first container named after it (default: the first one).
+    No language understanding: "the fruit" grounds to nothing."""
     text = instruction.lower()
-    target = next((o.name for o in state.objects.values()
-                   if o.kind != "plate" and (o.name.replace("_", " ") in text or o.kind in text)), None)
-    reference = next((o.name for o in state.objects.values() if o.kind == "plate"), None)
-    if target is None or reference is None:
+    containers = [o for o in state.objects.values() if o.kind in CONTAINER_KINDS]
+    if not containers:
+        raise PlanValidationError("no container in the scene")
+
+    def first_mention(o):
+        hits = [i for i in (text.find(o.name.replace("_", " ")), text.find(o.kind)) if i >= 0]
+        return min(hits) if hits else -1
+
+    mentioned = sorted((first_mention(o), o) for o in state.objects.values()
+                       if o.kind not in CONTAINER_KINDS and first_mention(o) >= 0)
+    goals = []
+    for pos, o in mentioned:
+        after = [(first_mention(c), c) for c in containers if first_mention(c) > pos]
+        ref = min(after, key=lambda x: x[0])[1] if after else containers[0]
+        goals.append(Goal(o.name, "in" if ref.kind == "bowl" else "on", ref.name))
+    if not goals:
         raise PlanValidationError(f"keyword parser could not ground: {instruction!r}")
-    return Goal(target, "on", reference)
+    return goals
 
 
-def _pick_place(goal: Goal, state: WorldState, grasp="top") -> list[Action]:
-    acts = []
-    if state.holding != goal.target:
-        if state.holding is not None:
-            acts.append(Action(ActionType.PLACE_ON, reference=goal.reference))
-        acts.append(Action(ActionType.PICK, goal.target, grasp=grasp))
-    acts.append(Action(ActionType.PLACE_ON, reference=goal.reference))
+def _pick_place(goals: list[Goal], state: WorldState, grasp="top") -> list[Action]:
+    acts, holding = [], state.holding
+    for goal in goals:
+        if holding != goal.target:
+            if holding is not None:   # put down what is held first: on its own goal if it has one
+                own = next((g for g in goals if g.target == holding), goal)
+                acts.append(Action(ActionType.PLACE_ON, reference=own.reference))
+            acts.append(Action(ActionType.PICK, goal.target, grasp=grasp))
+        acts.append(Action(ActionType.PLACE_ON, reference=goal.reference))
+        holding = None
     return acts
 
 
@@ -92,11 +120,11 @@ class FixedPlanner:
     """Baseline A: one scripted pick-and-place, no recovery."""
 
     def plan(self, instruction, state, history):
-        goal = _parse_goal_keywords(instruction, state)
-        return Plan(goal, _pick_place(goal, state), "fixed script"), []
+        goals = _parse_goal_keywords(instruction, state)
+        return Plan(goals, _pick_place(goals, state), "fixed script"), []
 
-    def replan(self, instruction, goal, state, history, failure):
-        return Plan(goal, [Action(ActionType.GIVE_UP)], "no recovery"), []
+    def replan(self, instruction, goals, state, history, failure, achieved=()):
+        return Plan(goals, [Action(ActionType.GIVE_UP)], "no recovery"), []
 
 
 class RuleBasedPlanner(FixedPlanner):
@@ -110,8 +138,8 @@ class RuleBasedPlanner(FixedPlanner):
         self.retries = self.grasp_failures = 0
         return super().plan(instruction, state, history)
 
-    def replan(self, instruction, goal, state, history, failure):
+    def replan(self, instruction, goals, state, history, failure, achieved=()):
         self.retries += 1
         self.grasp_failures += failure.type == FailureType.GRASP_FAILED
         grasp = GRASP_MODES[self.grasp_failures % len(GRASP_MODES)]
-        return Plan(goal, _pick_place(goal, state, grasp), f"rule retry #{self.retries}"), []
+        return Plan(goals, _pick_place(goals, state, grasp), f"rule retry #{self.retries}"), []

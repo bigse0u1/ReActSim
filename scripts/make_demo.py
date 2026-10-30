@@ -4,6 +4,7 @@ step as its candidates playing side by side.
     python scripts/make_demo.py --chaos knock --seed 1               # Muse Spark, kitchen
     python scripts/make_demo.py --chaos drop --offline               # mock planner, no API
     python scripts/make_demo.py --scene home --robot hand --chaos drop --instruction "Put the can on the plate"
+    python scripts/make_demo.py --scene tidy --chaos undo --instruction "Put the fruit on the plate and the can in the bowl"
 """
 
 import argparse
@@ -17,14 +18,16 @@ from reactsim.build import build_agent, default_instruction, load_config  # noqa
 from reactsim.viz.demo_video import DemoRecorder  # noqa: E402
 
 CHAOS = {"none": None,
-         "knock": {"kind": "knock", "object": "target", "dx": -0.08, "dy": 0.0},
-         "drop": {"kind": "drop"}}
+         "knock": (0, {"kind": "knock", "object": "target", "dx": -0.08, "dy": 0.0}),
+         "drop": (0, {"kind": "drop"}),
+         # several-goal tasks: after the second place, someone takes the banana back off the plate
+         "undo": (3, {"kind": "teleport", "object": "banana", "dx": 0.0, "dy": -0.25})}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
-    ap.add_argument("--scene", default="kitchen", choices=["kitchen", "home", "clutter"])
+    ap.add_argument("--scene", default="kitchen", choices=["kitchen", "home", "clutter", "tidy"])
     ap.add_argument("--robot", default="panda", choices=["panda", "hand"])
     ap.add_argument("--chaos", default="knock", choices=list(CHAOS))
     ap.add_argument("--seed", type=int, default=0)
@@ -41,8 +44,9 @@ def main():
     cfg["maniskill"].update(scene=args.scene, robot=args.robot, record_video=False)
     cfg["perception"].update(segmenter=args.segmenter, grasp_from=args.grasp_from)
     cfg["planning"]["planner"] = "muse"
-    cfg["chaos"]["enabled"] = CHAOS[args.chaos] is not None
-    cfg["chaos"]["scripted"] = [{"step": 0, "event": CHAOS[args.chaos]}] if CHAOS[args.chaos] else []
+    chaos = CHAOS[args.chaos]
+    cfg["chaos"]["enabled"] = chaos is not None
+    cfg["chaos"]["scripted"] = [{"step": chaos[0], "event": chaos[1]}] if chaos else []
     instruction = args.instruction or default_instruction(cfg)
 
     agent = build_agent(cfg, offline=args.offline)

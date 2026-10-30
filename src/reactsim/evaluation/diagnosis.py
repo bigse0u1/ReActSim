@@ -22,6 +22,21 @@ def goal_not_met(world, goal, why: str) -> FailureReport:
                          {"success_check": report})
 
 
+def goals_not_met(world, goals, why: str) -> FailureReport:
+    """goal_not_met for several goals: each open goal with the conditions it fails."""
+    if len(goals) == 1:
+        return goal_not_met(world, goals[0], why)
+    parts, reports = [], {}
+    for g in goals:
+        report = world.goal_report(g)
+        reports[f"{g.target} {g.relation} {g.reference}"] = report
+        bad = [f"{k} ({', '.join(f'{a}={b}' for a, b in c.items() if a != 'ok')})"
+               for k, c in report.items() if not c["ok"]]
+        parts.append(f"{g.target} {g.relation} {g.reference}: " + ("; ".join(bad) or "none"))
+    return FailureReport(FailureType.GOAL_NOT_MET, f"{why}; open goals: " + " | ".join(parts),
+                         {"success_check": reports})
+
+
 def diagnose(action: Action, result: SkillResult, before: WorldState,
              after: WorldState, goal_target: str) -> FailureReport:
     if not result.ok:

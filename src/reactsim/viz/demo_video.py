@@ -235,7 +235,7 @@ def readable(channel: str, msg: str) -> str:
             kind, obj = m.groups()
             return {"knock": f"a baseball is thrown at the {obj or 'object'}",
                     "drop": "the gripper is forced open",
-                    "teleport": f"someone moves the {obj or 'object'}"}[kind]
+                    "teleport": f"someone takes the {obj or 'object'} away"}[kind]
     if channel == "failure":
         kind, _, detail = msg.partition(": ")
         return f"{kind.replace('_', ' ')}: {detail}"

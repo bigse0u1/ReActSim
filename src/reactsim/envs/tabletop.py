@@ -17,6 +17,7 @@ import torch
 from mani_skill.agents.robots import Panda
 
 from reactsim.agents import xarm_ability
+from reactsim.types import CONTAINER_KINDS
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
@@ -35,10 +36,12 @@ class ObjectSpec:
     half_height: float        # from the YCB bbox; the model origin is the bbox centre
     yaw_range: float = 0.0    # random yaw +/- this (rad)
     sam_prompt: str = ""      # noun phrase SAM 3.1 finds reliably; defaults to the name
+    radius: float = 0.0       # containers: footprint radius things are put within
 
 
 # Robot base is at x=-0.615; Panda reaches ~0.85 m, so keep everything within ~0.75 m of it.
-PLATE = ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147)
+PLATE = ObjectSpec("029_plate", "plate", "red", (0.0, 0.17), 0.0147, radius=0.13)
+BOWL = ObjectSpec("024_bowl", "bowl", "red", (-0.02, -0.27), 0.0275, radius=0.08)   # 16 cm across, 5.5 cm deep
 SCENES = {
     "kitchen": {
         "banana": ObjectSpec("011_banana", "banana", "yellow", (0.05, -0.06), 0.0189, np.pi / 4),
@@ -57,6 +60,14 @@ SCENES = {
         "plate": PLATE,
     },
 }
+# Tidy: several things to put away, into two containers ("the fruit on the plate, the can in the bowl").
+SCENES["tidy"] = {
+    "banana": ObjectSpec("011_banana", "banana", "yellow", (0.06, -0.05), 0.0189, np.pi / 4),
+    "orange": ObjectSpec("017_orange", "orange", "orange", (-0.09, -0.08), 0.0365, sam_prompt="ball"),
+    "can": ObjectSpec("005_tomato_soup_can", "can", "red and white", (0.14, -0.13), 0.0513),
+    "plate": PLATE,
+    "bowl": BOWL,
+}
 # Cluttered: the kitchen objects, but the mug and the can stand right next to the banana in
 # random directions, so some approaches to it are blocked (see _place_clutter).
 SCENES["clutter"] = dict(SCENES["kitchen"])
@@ -72,7 +83,7 @@ CHAOS_BALL_RADIUS = 0.037
 CHAOS_BALL_PARK = (3.0, 3.0, 0.5)    # behind both cameras
 PLATE_RADIUS = 0.13
 PLATE_TOP = 2 * PLATE.half_height   # rim height; the plate is concave inside
-ON_PLATE_LIFT = 0.003   # an object on the plate sits at least this much higher than on the table
+ON_PLATE_LIFT = 0.002   # an object on a plate (inner floor 3.8 mm up) or in the bowl (2.9 mm) sits this much higher than on the table
 XY_JITTER = 0.03
 ROBOT_BASE_X = {"panda": -0.615, xarm_ability.UID: xarm_ability.BASE_X}
 
@@ -113,8 +124,8 @@ class ReActTabletopEnv(BaseEnv):
         for name, spec in self.specs.items():
             builder = get_actor_builder(self.scene, id=f"ycb:{spec.ycb_id}")
             builder.initial_pose = sapien.Pose(p=[*spec.xy, spec.half_height])
-            # The plate is fixed so a dropped object cannot shove it away.
-            self.objects[name] = (builder.build_kinematic(name=name) if name == "plate"
+            # Containers are fixed so a dropped object cannot shove them away.
+            self.objects[name] = (builder.build_kinematic(name=name) if spec.kind in CONTAINER_KINDS
                                   else builder.build(name=name))
         # Kept out of self.objects so perception and planning never see it.
         builder = get_actor_builder(self.scene, id=f"ycb:{CHAOS_BALL_ID}")
@@ -132,7 +143,7 @@ class ReActTabletopEnv(BaseEnv):
                 self.agent.reset(xarm_ability.hand_qpos(rest))
                 self.agent.robot.set_pose(sapien.Pose(p=[self.base_x, 0, 0]))
             for name, spec in self.specs.items():
-                if name == "plate":
+                if spec.kind in CONTAINER_KINDS:
                     continue
                 xyz = torch.zeros((b, 3))
                 xyz[:, :2] = torch.tensor(spec.xy) + (torch.rand((b, 2)) - 0.5) * 2 * XY_JITTER
