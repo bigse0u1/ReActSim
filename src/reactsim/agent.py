@@ -21,6 +21,7 @@ def _goal_str(g: Goal) -> str:
 
 MAX_SAME_FAILURE = 3   # stop after the same failure follows the same action this many times
 MAX_NO_WORKING_GRASP = 2   # ... sooner when Imagination already showed nothing works
+MAX_PLANNED_NUDGES = 2     # nudges per object that Imagination showed make a grasp work
 
 
 class ReActAgent:
@@ -91,6 +92,7 @@ class ReActAgent:
         held_before: list[Goal] = []   # goals that held after the previous step
         pending_replay = None   # (follow-up action, its imagined trace)
         repeats: dict[tuple, int] = {}
+        nudges: dict[str, int] = {}   # object -> planned nudges so far
         last_action = None
         while step < self.max_steps:
             open_goals = unmet()
@@ -112,7 +114,7 @@ class ReActAgent:
                 if action.type == ActionType.DONE:
                     failure = goals_not_met(self.world, open_goals, "planner said done but the success check fails")
                 else:
-                    chosen, imagined = None, []
+                    chosen, imagined, proposed = None, [], action
                     goal = focus(action)
                     if self.imagination is not None:
                         cands = self._candidates(action, alternatives)
@@ -131,17 +133,19 @@ class ReActAgent:
                     alternatives = []
 
                     last_action = action.short()
-                    if imagined and all(i.failure.is_failure and i.failure.type != FailureType.OBJECT_MOVED
-                                        for i in imagined):
-                        # Every candidate fails in physics and none even moves the object, so
-                        # executing one would fail the same way and change nothing. Report it.
-                        # (A candidate that moves the object is still tried: it can nudge the
-                        # object somewhere graspable.)
+                    useless_nudge = (chosen is not None and chosen.looked_ahead and chosen.leads_to is None)
+                    if imagined and all(i.failure.is_failure for i in imagined) and (
+                            chosen is None or chosen.failure.type != FailureType.OBJECT_MOVED or useless_nudge):
+                        # Every candidate fails in physics, and none moves the object either, or
+                        # the nudge was imagined one step further and no grasp works after it:
+                        # executing one would fail and change nothing useful. Report it.
                         tried = rec.imagined[-1]["candidates"]
                         failure = FailureReport(
                             FailureType.NO_WORKING_GRASP,
                             f"no grasp works on {action.target} where it is now: imagined "
-                            + "; ".join(f"{c['action']} -> {c['detail'] or c['failure']}" for c in tried),
+                            + "; ".join(f"{c['action']} -> {c['detail'] or c['failure']}" for c in tried)
+                            + (f"; nudging it with {chosen.action.short()} leaves no grasp that works either"
+                               if useless_nudge else ""),
                             {"imagined": tried})
                         rec.steps.append({"step": step, "action": f"imagine {action.short()}", "ok": False,
                                           "failure": failure.type.value, "detail": failure.detail})
@@ -173,6 +177,15 @@ class ReActAgent:
                     self.dash.observation(step + 1, obs, self.perception.last_masks)
                     self.dash.objects(step + 1, after)
                     failure = diagnose(action, result, state, after, goal.target)
+                    if (chosen is not None and chosen.leads_to is not None and failure.type == FailureType.OBJECT_MOVED
+                            and nudges.get(action.target, 0) < MAX_PLANNED_NUDGES):
+                        # Imagination chose this nudge because a grasp works after it: the object
+                        # moving was the point. Try the grasp now instead of replanning.
+                        nudges[action.target] = nudges.get(action.target, 0) + 1
+                        self.dash.text(step, "nudge", f"moved {action.target} on purpose; "
+                                                      f"{chosen.leads_to.short()} works from there")
+                        failure = FailureReport(FailureType.NONE, f"planned nudge: {chosen.leads_to.short()} works next")
+                        queue.insert(0, proposed)
                     undone = [g for g in held_before if not self.world.is_goal_satisfied(g)]
                     if not failure.is_failure and undone:
                         # Something already done came undone (e.g. someone took it back off the

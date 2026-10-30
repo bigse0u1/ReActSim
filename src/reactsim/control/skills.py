@@ -93,6 +93,11 @@ class PandaSkills:
         approaching, target_closing = self._approach(p, grasp, approach_deg)
         info = compute_grasp_info_by_obb(obb, approaching=approaching,
                                          target_closing=target_closing, depth=FINGER_LENGTH)
+        if grasp == "side":
+            # The box picks its shortest remaining axis, which on a low object (banana, mug) is
+            # the height: the fingers would close top-to-bottom and the hand stand on its edge
+            # against the table. Close them horizontally, across the object, instead.
+            info["closing"] = target_closing
         center = p + np.array([0.0, 0.0, 0.0 if grasp == "top" else SIDE_GRASP_DZ])
         grasp_pose = env.agent.build_grasp_pose(approaching, info["closing"], center)
         reach_pose = grasp_pose * sapien.Pose([0, 0, -APPROACH_OFFSET])
@@ -114,9 +119,10 @@ class PandaSkills:
         # Whether the object actually came along is checked by the diagnoser, not here.
         return SkillResult(True, "pick motion finished", time.time() - t0)
 
-    def place_on(self, ref_xyz: np.ndarray, drop_height: float = 0.05) -> SkillResult:
+    def place_on(self, ref_xyz: np.ndarray, drop_height: float = 0.05, q: np.ndarray | None = None) -> SkillResult:
+        """q: the gripper orientation to put the object down in (default: as it is held)."""
         t0 = time.time()
-        tcp_q = self.env.agent.tcp.pose.sp.q
+        tcp_q = self.env.agent.tcp.pose.sp.q if q is None else q
         above = sapien.Pose(p=ref_xyz + np.array([0, 0, LIFT_HEIGHT]), q=tcp_q)
         down = sapien.Pose(p=ref_xyz + np.array([0, 0, drop_height]), q=tcp_q)
         for pose, msg in ((above, "transport"), (down, "descend")):

@@ -83,6 +83,21 @@ On a cluttered table (`--scene clutter`: the mug and the can stand 12-14 cm from
 
 In 5 of the 19 successes the grasp that worked came from the robot's left or right. The one failure is a top grasp that flung the banana 3.6 m (a physics glitch in contact with a neighbour). Twenty seeds do not make the differences significant (p=0.18 vs rule); the drop in recoveries is the clearer effect. The neighbour distance was chosen by measuring: at 14-16 cm nothing is in the way (robot-side grasps solve 7/8 layouts, all sides 7/8); at 12-14 cm 4/8 vs 8/8; at 10-12 cm 3/8 vs 6/8. Results in `outputs/bench_clutter`.
 
+### 🥫 Standing it back up, and nudging on purpose
+The baseball usually knocks the soup can over, and "on the plate" means standing. When the arm holds something that must stand but is lying down, the place skill turns the wrist so the can's axis is vertical and sets it down upright; Imagination checks the whole pick-and-place as before. Side grasps also close the fingers horizontally now (the box helper picked the shortest axis, which on a low object is its height, so the gripper stood on its edge against the table; mug side grasps 0/16 → 9/16).
+
+When no grasp works, a candidate that only moves the object is no longer tried blindly: Imagination replays it and tries every grasp again from where it leaves the object. It nudges only if a grasp then works, and grasps right after without a replan; otherwise Muse Spark hears "no grasp works, and nudging does not help either".
+
+Can / knock, seeds 0-19, real Muse Spark, 9 candidates (`outputs/bench_c1/can`):
+
+| | success | recoveries per episode |
+|---|---|---|
+| before (no stand-up; `outputs/bench_c1/can_before_standup`, 9 seeds) | 0/9 | - |
+| B: rule-based retry, with stand-up | 16/20 | 1.8 |
+| **Muse Spark + Imagination, with stand-up** | **19/20** | **1.2** |
+
+Standing up is a skill, so it helps the rule baseline too; the remaining gap is not significant (p=0.17). The rule's four failures are "no path" three times in a row or the replan budget; ours is a can thrown 69 cm to the edge of the workspace, out of reach (Muse Spark gave up after two tries and said so). The baseball got stronger after the main benchmark (it now frees a held banana every time), which is why "before" is lower than the 5/20 in the table below.
+
 ### 🤝 The LLM proposes, physics disposes
 Excerpt from a real run (Muse Spark `muse-spark-1.3`, ManiSkill, seed 0). The banana was knocked out of the gripper by Chaos Mode:
 

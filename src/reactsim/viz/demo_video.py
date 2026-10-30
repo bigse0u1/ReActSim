@@ -27,10 +27,11 @@ FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 BG, PANEL, WHITE, GREY = (18, 20, 24), (30, 33, 40), (235, 235, 235), (150, 155, 165)
 COLOURS = {"plan": (120, 170, 255), "replan": (120, 170, 255), "act": WHITE, "see": GREY,
            "chaos": (255, 120, 90), "failure": (255, 95, 95), "success": (110, 220, 130),
-           "give_up": (255, 200, 90), "imagine": (255, 175, 70), "planner": (255, 200, 90)}
+           "give_up": (255, 200, 90), "imagine": (255, 175, 70), "planner": (255, 200, 90),
+           "nudge": (255, 175, 70)}
 LABELS = {"plan": "PLAN", "replan": "REPLAN", "act": "ACT", "see": "SEE", "chaos": "CHAOS",
           "failure": "FAILURE", "success": "SUCCESS", "give_up": "GAVE UP", "imagine": "IMAGINE",
-          "planner": "PLANNER"}
+          "planner": "PLANNER", "nudge": "NUDGE"}
 FAILURE_WORDS = {"none": "works", "object_moved": "pushes it away", "grasp_failed": "slips",
                  "controller_error": "no path", "goal_not_met": "fails on placing", "dropped": "drops it",
                  "target_lost": "loses sight"}
@@ -155,12 +156,19 @@ class DemoRecorder(Dashboard):
                     if t >= len(clip) - 1:          # outcome appears when this rollout is done
                         ok = not im.failure.is_failure
                         word = FAILURE_WORDS.get(im.failure.type.value, im.failure.type.value)
+                        if im.leads_to is not None:
+                            word = "pushes it, then a grasp works"
+                        elif im.looked_ahead:
+                            word = "pushes it, still no grasp"
                         colour = COLOURS["success"] if ok else COLOURS["failure"]
                         d.rectangle([x, y, x + tile, y + tile], outline=colour, width=5)
                         d.text((x + tile // 2, y + tile + (36 if small else 52)), ("OK  " if ok else "X  ") + word,
                                font=bold[20 if small else 22], fill=colour, anchor="mm")
                 if t >= length - 1 and chosen_idx is not None:
-                    msg = f"-> the robot will do: {grasp_label(imagined[chosen_idx].action)}"
+                    pick = imagined[chosen_idx]
+                    msg = f"-> the robot will do: {grasp_label(pick.action)}"
+                    if pick.leads_to is not None:
+                        msg = f"-> nudge it on purpose, then {grasp_label(pick.leads_to)}"
                     d.text((W // 2, H - 30), msg, font=bold[26], fill=COLOURS["success"], anchor="mm")
                 elif t >= length - 1:
                     d.text((W // 2, H - 30), "-> nothing works here: tell Muse Spark why instead of trying",
@@ -202,6 +210,14 @@ def _chosen(imagined) -> int | None:
 
     if not imagined[0].failure.is_failure and imagined[0].result.ok:
         return 0
+    works = [k for k, i in enumerate(imagined) if i.result.ok and not i.failure.is_failure]
+    if works:
+        return max(works, key=lambda k: imagined[k].score)
+    nudge = next((k for k, i in enumerate(imagined) if i.leads_to is not None), None)
+    if nudge is not None:
+        return nudge
+    if any(i.looked_ahead for i in imagined):   # pushing it was imagined further and does not help
+        return None
     if all(i.failure.is_failure and i.failure.type != FailureType.OBJECT_MOVED for i in imagined):
         return None
     return max(range(len(imagined)),

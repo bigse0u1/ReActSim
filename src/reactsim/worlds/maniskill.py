@@ -223,10 +223,19 @@ class ManiSkillWorld:
             if held is None:
                 return SkillResult(False, "nothing in gripper")
             spot = self._free_spot(action.reference, held)
+            rim = 2 * self.u.specs[action.reference].half_height
+            turn = self._stand_up(held) if self.robot != "hand" else None
+            if turn is not None:
+                # Held lying down (a knocked-over can): turn the wrist so it goes down standing.
+                R, q = turn
+                tcp = _np(self.u.agent.tcp.pose.p[0])
+                hang = R @ (_np(objs[held].pose.p[0]) - tcp)    # object centre from the gripper, after turning
+                xy = spot - hang[:2]
+                release_z = rim + PLACE_CLEARANCE + self.u.specs[held].half_height - hang[2]
+                return s.place_on(np.array([xy[0], xy[1], release_z]), drop_height=0.0, q=q)
             # Keep the object's current hang below the gripper; lower until its bottom clears the rim.
             tcp_z = float(self.u.agent.tcp.pose.p[0, 2])
             bottom = float(objs[held].pose.p[0, 2]) - self.u.specs[held].half_height
-            rim = 2 * self.u.specs[action.reference].half_height
             release_z = rim + PLACE_CLEARANCE + (tcp_z - bottom)
             return s.place_on(np.array([spot[0], spot[1], release_z]), drop_height=0.0)
         if t == ActionType.PUSH_ASIDE:
@@ -234,6 +243,35 @@ class ManiSkillWorld:
         if t == ActionType.HOME:
             return s.home()
         return SkillResult(True, t.value)
+
+    def _stand_up(self, held: str):
+        """For an object that must end standing but is held tilted: the rotation that turns
+        its axis upright, and the gripper orientation after it. Of the two ways (axis to +z or
+        to -z, the same for a can) take the one that keeps the gripper pointing down most."""
+        import sapien
+        from transforms3d.quaternions import mat2quat
+        if self.u.specs[held].kind not in UPRIGHT_KINDS:
+            return None
+        up = sapien.Pose(q=_np(self.u.objects[held].pose.q[0])).to_transformation_matrix()[:3, 2]
+        if np.degrees(np.arccos(min(abs(up[2]), 1.0))) < MAX_TILT_DEG:
+            return None
+        R_tcp = self.u.agent.tcp.pose.sp.to_transformation_matrix()[:3, :3]
+        best = None
+        for u in (up, -up):
+            axis = np.cross(u, [0.0, 0.0, 1.0])
+            s, c = np.linalg.norm(axis), float(u[2])
+            if s < 1e-6:
+                continue
+            k = axis / s
+            K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+            R = np.eye(3) + s * K + (1 - c) * K @ K          # Rodrigues: u -> +z
+            down = (R @ R_tcp)[2, 2]                          # gripper approach axis, z component
+            if best is None or down < best[0]:
+                best = (down, R)
+        if best is None:
+            return None
+        R = best[1]
+        return R, mat2quat(R @ R_tcp)
 
     def perturb(self, event: PerturbEvent) -> None:
         import sapien

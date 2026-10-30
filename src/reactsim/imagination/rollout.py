@@ -19,6 +19,9 @@ from reactsim.perception.grounding import Perception
 from reactsim.types import Action, FailureReport, FailureType, Goal, SkillResult, WorldState
 
 
+MAX_NUDGES_IMAGINED = 2   # nudging candidates imagined one step further when nothing works
+
+
 @dataclass
 class Imagined:
     action: Action
@@ -29,6 +32,10 @@ class Imagined:
     trace: Any = None        # world-specific record that lets the real run replay this exact rollout
     then: Action | None = None   # follow-up imagined after the action (e.g. the place after a pick)
     then_trace: Any = None
+    # For a candidate that only moved the object: was it imagined one step further, and which
+    # grasp works from where the nudge leaves the object (None: none does)?
+    looked_ahead: bool = False
+    leads_to: Action | None = None
 
 
 def score(result: SkillResult, failure: FailureReport) -> float:
@@ -99,7 +106,38 @@ class Imagination:
         # The planner's proposal stands if physics says it works; it is only overruled when it fails.
         if imagined[0].result.ok and not imagined[0].failure.is_failure:
             return imagined[0].action, imagined
-        # When nothing works, prefer a candidate that at least moved the object (a nudge can
-        # leave it somewhere graspable) over one that changes nothing.
+        works = [i for i in imagined if i.result.ok and not i.failure.is_failure]
+        if works:
+            return max(works, key=lambda i: i.score).action, imagined
+        # Nothing works. A candidate that moves the object might leave it somewhere graspable,
+        # but blindly trying it rarely does: imagine one step further and nudge only when a
+        # grasp works afterwards.
+        movers = sorted((i for i in imagined if i.failure.type == FailureType.OBJECT_MOVED),
+                        key=lambda i: i.score, reverse=True)
+        for m in movers[:MAX_NUDGES_IMAGINED]:
+            m.looked_ahead = True
+            m.leads_to = self._grasp_after(m, candidates, goal, step, then)
+            if m.leads_to is not None:
+                return m.action, imagined
         best = max(imagined, key=lambda i: (i.score, i.failure.type == FailureType.OBJECT_MOVED))
         return best.action, imagined
+
+    def _grasp_after(self, nudge: Imagined, candidates: list[Action], goal: Goal, step: int,
+                     then: Action | None) -> Action | None:
+        """Replay the nudge, then imagine every candidate from where it leaves the object."""
+        if nudge.trace is None or not hasattr(self.world, "replay"):
+            return None
+        set_recording = getattr(self.world, "set_recording", lambda on: None)
+        capture, self.capture = self.capture, False
+        set_recording(False)
+        snap = self.world.snapshot()
+        try:
+            self.world.replay(nudge.trace)
+            for i in self.evaluate(candidates, goal, step, then):
+                if i.result.ok and not i.failure.is_failure:
+                    return i.action
+            return None
+        finally:
+            self.world.restore(snap)
+            set_recording(True)
+            self.capture = capture

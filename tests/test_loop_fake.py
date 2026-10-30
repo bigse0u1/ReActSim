@@ -123,3 +123,33 @@ def test_several_goals_all_have_to_hold():
     assert rec.success
     assert rec.goals == ["banana on plate", "can on plate"]
     assert sum(s["action"].startswith("place_on") and s["failure"] == "none" for s in rec.steps) == 2
+
+
+def test_imagination_prefers_a_working_grasp_over_a_nudge():
+    """A nudge is only imagined further when no candidate works; when one is found to make a
+    grasp work afterwards it is chosen, otherwise it is marked as not helping."""
+    from reactsim.imagination.rollout import Imagination, Imagined
+    from reactsim.types import Action, ActionType, FailureReport, FailureType, Goal, SkillResult
+
+    def im(grasp, kind):
+        fail = FailureReport(FailureType(kind))
+        return Imagined(Action(ActionType.PICK, "can", grasp=grasp), SkillResult(True), fail,
+                        1.0 if kind == "none" else 0.0, trace=([], SkillResult(True)))
+
+    goal = Goal("can", "on", "plate")
+    imagination = Imagination(world=None, perception=None, max_candidates=3)
+    looked = []
+    imagination._grasp_after = lambda m, *a: looked.append(m) or after
+    after = Action(ActionType.PICK, "can", grasp="top")
+
+    imagination.evaluate = lambda *a: [im("side", "object_moved"), im("top", "none")]
+    action, _ = imagination.choose([None, None], goal, 0)
+    assert action.grasp == "top" and looked == []          # the working grasp, no lookahead
+
+    imagination.evaluate = lambda *a: [im("side", "object_moved"), im("top", "grasp_failed")]
+    action, imagined = imagination.choose([None, None], goal, 0)
+    assert action.grasp == "side" and imagined[0].leads_to is after
+
+    after = None
+    action, imagined = imagination.choose([None, None], goal, 0)
+    assert imagined[0].looked_ahead and imagined[0].leads_to is None
